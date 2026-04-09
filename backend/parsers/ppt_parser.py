@@ -279,6 +279,13 @@ class PPTParser:
                     if len(text) > 20:
                         question_text += (" " + text if question_text else text)
 
+            # Se não encontrou alternativas com prefixo A/B/C, tenta extrair do texto
+            if not alternatives and question_text:
+                extracted_q, extracted_alts = self._extract_alts_from_text(question_text)
+                if extracted_alts:
+                    question_text = extracted_q
+                    alternatives = extracted_alts
+
             # Tentar detectar resposta
             correct_answer = None
             if gabarito:
@@ -301,9 +308,15 @@ class PPTParser:
                     break
 
             if not alternatives and buffered_question:
-                # Continua acumulando texto em slides sem alternativas
-                buffered_question["question"] += "\n" + question_text
-                continue
+                # Se o slide atual tem texto substancial (> 200 chars), é uma nova questão
+                # Não é continuação — flush o buffer e trata como nova questão
+                if len(question_text) > 200:
+                    slides_data.append(buffered_question)
+                    buffered_question = None
+                    # Cai para criação de nova questão abaixo
+                else:
+                    buffered_question["question"] += "\n" + question_text
+                    continue
 
             if buffered_question and alternatives:
                 buffered_question["alternatives"] = alternatives
@@ -318,7 +331,7 @@ class PPTParser:
                     "question_number": q_num or (len(slides_data) + 1),
                     "question": question_text,
                     "alternatives": [],
-                    "correct_answer": None,
+                    "correct_answer": correct_answer,
                 }
                 continue
 
@@ -335,6 +348,53 @@ class PPTParser:
             slides_data.append(buffered_question)
 
         return slides_data
+
+    def _extract_alts_from_text(self, text: str) -> tuple[str, list[str]]:
+        """
+        Tenta extrair alternativas de texto quando não há prefixo A)/B)/C).
+        Heurísticas:
+        1. Texto termina com 'assinale...', 'qual é...', 'qual das...' etc → linhas seguintes são alternativas
+        2. Últimas 4-5 linhas são curtas e parecidas em tamanho → provavelmente alternativas
+        """
+        lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+        if len(lines) < 4:
+            return text, []
+
+        # Heurística 1: detectar onde a questão termina e as alternativas começam
+        question_end_patterns = [
+            r"assinale\s+a\s+alternativa",
+            r"assinale\s+a\s+opção",
+            r"qual\s+[eé]\s+a\s+",
+            r"qual\s+das\s+",
+            r"indique\s+a\s+",
+            r"marque\s+a\s+",
+            r"escolha\s+a\s+",
+            r"identifique\s+",
+            r"\?\s*$",
+        ]
+
+        split_idx = -1
+        for i, line in enumerate(lines):
+            for pattern in question_end_patterns:
+                if re.search(pattern, line, re.IGNORECASE):
+                    split_idx = i + 1
+                    break
+            if split_idx > 0:
+                break
+
+        if 0 < split_idx < len(lines):
+            alt_lines = lines[split_idx:]
+            # Valida: 2 a 8 alternativas, nenhuma muito longa
+            if 2 <= len(alt_lines) <= 8 and all(len(a) < 300 for a in alt_lines):
+                return "\n".join(lines[:split_idx]), alt_lines
+
+        # Heurística 2: últimas 4 linhas se forem curtas (< 200 chars cada)
+        if len(lines) >= 6:
+            potential_alts = lines[-4:]
+            if all(len(a) < 200 for a in potential_alts):
+                return "\n".join(lines[:-4]), potential_alts
+
+        return text, []
 
     def _load_gabarito(self, path: str) -> dict | list | None:
         try:
