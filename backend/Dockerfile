@@ -1,33 +1,10 @@
-# Backend — FastAPI + Playwright
-FROM python:3.11-slim
+# Usa a imagem oficial do Playwright (Ubuntu 22.04 + Python 3.11 + Chromium já instalado)
+FROM mcr.microsoft.com/playwright/python:v1.46.0-jammy
 
-# Dependências do sistema para Playwright + Xvfb (display virtual) + LibreOffice
+# Instala LibreOffice (conversão PPTX→PDF) e Xvfb (display virtual)
 RUN apt-get update && apt-get install -y \
     libreoffice \
     xvfb \
-    wget \
-    curl \
-    gnupg \
-    libglib2.0-0 \
-    libnss3 \
-    libnspr4 \
-    libdbus-1-3 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxcb1 \
-    libxkbcommon0 \
-    libx11-6 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -35,18 +12,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Instala o Chromium do Playwright
+# Garante que o Chromium está instalado na versão correta
 RUN playwright install chromium
-RUN playwright install-deps chromium
 
 COPY . .
 
-# Cria diretórios necessários
 RUN mkdir -p uploads sessions
 
 EXPOSE 8000
 
-# start.sh inicia o Xvfb (display virtual) e depois o servidor
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
 
