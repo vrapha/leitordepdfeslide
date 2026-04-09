@@ -61,8 +61,11 @@ def root():
 def health():
     """Diagnóstico — não expõe valores, só presença."""
     key = os.environ.get("API_SECRET_KEY", "")
+    # Lista nomes das variáveis disponíveis (sem valores)
+    env_keys = [k for k in os.environ.keys() if not k.startswith("PATH")]
     return {
         "api_secret_key_set": bool(key),
         "api_secret_key_length": len(key),
         "allowed_origins": ALLOWED_ORIGINS,
+        "env_keys_available": sorted(env_keys),
     }
