@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Sessões e arquivos sensíveis — NUNCA subir ao GitHub
+backend/sessions/
+backend/uploads/
+backend/*.json
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Misc
+.DS_Store
+*.log
