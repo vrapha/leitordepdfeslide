@@ -14,21 +14,24 @@ from fastapi.security.api_key import APIKeyHeader
 API_KEY_NAME = "X-API-Key"
 _api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-# Carregado do env var API_SECRET_KEY (configurado no Railway e no Lovable)
-_SECRET_KEY: str = os.environ.get("API_SECRET_KEY", "")
-
 MAX_FILE_SIZE_MB = 50
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 
+def _get_secret() -> str:
+    """Lê API_SECRET_KEY do ambiente a cada chamada (nunca em cache)."""
+    return os.environ.get("API_SECRET_KEY", "")
+
+
 def require_api_key(api_key: str = Security(_api_key_header)) -> str:
     """Dependência FastAPI — rejeita se API key inválida ou ausente."""
-    if not _SECRET_KEY:
+    secret = _get_secret()
+    if not secret:
         raise HTTPException(
             status_code=500,
             detail="API_SECRET_KEY não configurada no servidor.",
         )
-    if api_key != _SECRET_KEY:
+    if api_key != secret:
         raise HTTPException(
             status_code=401,
             detail="API Key inválida ou ausente.",
@@ -38,9 +41,10 @@ def require_api_key(api_key: str = Security(_api_key_header)) -> str:
 
 def check_websocket_key(api_key: str) -> bool:
     """Verifica API key para WebSocket (retorna bool em vez de raise)."""
-    if not _SECRET_KEY:
+    secret = _get_secret()
+    if not secret:
         return False
-    return api_key == _SECRET_KEY
+    return api_key == secret
 
 
 async def validate_pdf(file: UploadFile) -> bytes:
