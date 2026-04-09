@@ -3,13 +3,16 @@ EMR Web App — FastAPI Backend
 Dois módulos: Leitor de Slides (PPTX) e Leitor de PDF (extração de códigos).
 """
 import os
+import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import slides, pdf, auth
 
+# Produção = API_SECRET_KEY está definida no Railway
+_is_production = bool(os.environ.get("API_SECRET_KEY", ""))
+
 # Em produção, defina ALLOWED_ORIGIN no Railway com o domínio do Lovable.
 # Ex: https://meu-app.lovable.app
-# Separe múltiplos com vírgula: https://app1.lovable.app,https://app2.lovable.app
 _raw_origins = os.environ.get("ALLOWED_ORIGIN", "")
 ALLOWED_ORIGINS: list[str] = (
     [o.strip() for o in _raw_origins.split(",") if o.strip()]
@@ -17,20 +20,16 @@ ALLOWED_ORIGINS: list[str] = (
     else ["*"]
 )
 
-# Em produção (API_SECRET_KEY definida), nunca permitir wildcard
+# Em produção com wildcard: bloqueia CORS totalmente até configurar corretamente
 if _is_production and "*" in ALLOWED_ORIGINS:
-    import sys
     print(
-        "ERRO: ALLOWED_ORIGIN não está configurado. "
-        "Defina a variável no Railway com o domínio do Lovable. "
-        "Ex: https://meu-app.lovable.app",
+        "AVISO: ALLOWED_ORIGIN não configurado. "
+        "Defina no Railway com o domínio do Lovable (ex: https://meu-app.lovable.app). "
+        "CORS bloqueado até que seja configurado.",
         file=sys.stderr,
     )
-    # Bloqueia totalmente até que seja configurado corretamente
     ALLOWED_ORIGINS = []
 
-# Oculta /docs e /redoc em produção (quando API_SECRET_KEY está definida)
-_is_production = bool(os.environ.get("API_SECRET_KEY", ""))
 app = FastAPI(
     title="EMR Web App",
     description="Leitor de Slides PPTX + Leitor de PDF com automação Playwright",
