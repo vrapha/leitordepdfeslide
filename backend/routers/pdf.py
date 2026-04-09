@@ -10,13 +10,14 @@ import csv
 import io
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 
 from services.job_manager import create_job, get_job, make_logger
 from services.pdf_service import run_pdf_extraction
+from security import require_api_key, validate_file, validate_file_size
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_key)])
 UPLOADS_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -31,10 +32,12 @@ async def extract_pdf(
     Inicia extração de códigos do PDF em background.
     target = número máximo de códigos a encontrar.
     """
-    job = create_job()
+    validate_file(file, "pdf")
+    content = await validate_file_size(file)
 
-    pdf_path = UPLOADS_DIR / f"{job.id}_{file.filename}"
-    content = await file.read()
+    job = create_job()
+    safe_name = Path(file.filename or "upload.pdf").name
+    pdf_path = UPLOADS_DIR / f"{job.id}_{safe_name}"
     pdf_path.write_bytes(content)
 
     background_tasks.add_task(_run_extraction_thread, job.id, str(pdf_path), target)
@@ -103,9 +106,15 @@ async def download_csv(job_id: str):
 
 
 @router.websocket("/ws/{job_id}")
-async def websocket_logs(websocket: WebSocket, job_id: str):
-    """Transmite logs do job em tempo real."""
+async def websocket_logs(websocket: WebSocket, job_id: str, api_key: str = ""):
+    """Transmite logs do job em tempo real. Autenticação via query param api_key."""
+    import os
     await websocket.accept()
+    secret = os.environ.get("API_SECRET_KEY", "")
+    if secret and api_key != secret:
+        await websocket.send_text("[ERROR] Não autorizado")
+        await websocket.close(code=4001)
+        return
     job = get_job(job_id)
     if not job:
         await websocket.send_text("[ERROR] Job não encontrado")

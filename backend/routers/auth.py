@@ -11,11 +11,12 @@ Gerencia sessões salvas para ChatGPT e painel web.
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 
 from services.job_manager import create_job, get_job, make_logger
+from security import require_api_key
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_key)])
 
 SESSIONS_DIR = Path(__file__).resolve().parent.parent / "sessions"
 CHATGPT_AUTH = SESSIONS_DIR / "auth.json"

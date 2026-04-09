@@ -10,15 +10,16 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 from services.job_manager import create_job, get_job, make_logger
 from services.ppt_service import analyze_ppt, build_prompt, save_response_to_notes
 from services.chatbot_service import ChatGPTBot
 from parsers.ppt_parser import PPTParser
+from security import require_api_key, validate_file, validate_file_size
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_api_key)])
 UPLOADS_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -33,8 +34,10 @@ async def analyze_slides(
     logger = make_logger(job)
 
     # Salva o arquivo enviado
-    pptx_path = UPLOADS_DIR / f"{job.id}_{file.filename}"
-    content = await file.read()
+    validate_file(file, "pptx")
+    content = await validate_file_size(file)
+    safe_name = Path(file.filename or "upload.pptx").name
+    pptx_path = UPLOADS_DIR / f"{job.id}_{safe_name}"
     pptx_path.write_bytes(content)
 
     # Roda análise de forma síncrona (rápido o suficiente)
@@ -209,9 +212,15 @@ async def download_result(job_id: str):
 
 
 @router.websocket("/ws/{job_id}")
-async def websocket_logs(websocket: WebSocket, job_id: str):
-    """Transmite logs do job em tempo real via WebSocket."""
+async def websocket_logs(websocket: WebSocket, job_id: str, api_key: str = ""):
+    """Transmite logs do job em tempo real via WebSocket. Autenticação via query param api_key."""
+    import os
     await websocket.accept()
+    secret = os.environ.get("API_SECRET_KEY", "")
+    if secret and api_key != secret:
+        await websocket.send_text("[ERROR] Não autorizado")
+        await websocket.close(code=4001)
+        return
     job = get_job(job_id)
     if not job:
         await websocket.send_text('[ERROR] Job não encontrado')
