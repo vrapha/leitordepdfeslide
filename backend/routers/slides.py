@@ -17,7 +17,7 @@ from services.job_manager import create_job, get_job, make_logger
 from services.ppt_service import analyze_ppt, build_prompt, save_response_to_notes
 from services.chatbot_service import ChatGPTBot
 from parsers.ppt_parser import PPTParser
-from security import require_api_key, validate_file, validate_file_size
+from security import require_api_key, check_websocket_key, validate_pptx, safe_output_path
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 UPLOADS_DIR = Path(__file__).resolve().parent.parent / "uploads"
@@ -34,8 +34,7 @@ async def analyze_slides(
     logger = make_logger(job)
 
     # Salva o arquivo enviado
-    validate_file(file, "pptx")
-    content = await validate_file_size(file)
+    content = await validate_pptx(file)
     safe_name = Path(file.filename or "upload.pptx").name
     pptx_path = UPLOADS_DIR / f"{job.id}_{safe_name}"
     pptx_path.write_bytes(content)
@@ -117,7 +116,7 @@ def _run_processing_thread(
         job.status = "done"
         return
 
-    output_file = pptx_path.replace(".pptx", "_Analyzed.pptx")
+    output_file = str(safe_output_path(pptx_path, "_Analyzed.pptx", UPLOADS_DIR))
 
     bot = ChatGPTBot(headless=False, logger=logger)
     try:
@@ -214,13 +213,10 @@ async def download_result(job_id: str):
 @router.websocket("/ws/{job_id}")
 async def websocket_logs(websocket: WebSocket, job_id: str, api_key: str = ""):
     """Transmite logs do job em tempo real via WebSocket. Autenticação via query param api_key."""
-    import os
-    await websocket.accept()
-    secret = os.environ.get("API_SECRET_KEY", "")
-    if secret and api_key != secret:
-        await websocket.send_text("[ERROR] Não autorizado")
+    if not check_websocket_key(api_key):
         await websocket.close(code=4001)
         return
+    await websocket.accept()
     job = get_job(job_id)
     if not job:
         await websocket.send_text('[ERROR] Job não encontrado')

@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 
 from services.job_manager import create_job, get_job, make_logger
 from services.pdf_service import run_pdf_extraction
-from security import require_api_key, validate_file, validate_file_size
+from security import require_api_key, check_websocket_key, validate_pdf
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 UPLOADS_DIR = Path(__file__).resolve().parent.parent / "uploads"
@@ -32,8 +32,7 @@ async def extract_pdf(
     Inicia extração de códigos do PDF em background.
     target = número máximo de códigos a encontrar.
     """
-    validate_file(file, "pdf")
-    content = await validate_file_size(file)
+    content = await validate_pdf(file)
 
     job = create_job()
     safe_name = Path(file.filename or "upload.pdf").name
@@ -108,13 +107,10 @@ async def download_csv(job_id: str):
 @router.websocket("/ws/{job_id}")
 async def websocket_logs(websocket: WebSocket, job_id: str, api_key: str = ""):
     """Transmite logs do job em tempo real. Autenticação via query param api_key."""
-    import os
-    await websocket.accept()
-    secret = os.environ.get("API_SECRET_KEY", "")
-    if secret and api_key != secret:
-        await websocket.send_text("[ERROR] Não autorizado")
+    if not check_websocket_key(api_key):
         await websocket.close(code=4001)
         return
+    await websocket.accept()
     job = get_job(job_id)
     if not job:
         await websocket.send_text("[ERROR] Job não encontrado")

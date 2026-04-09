@@ -14,8 +14,8 @@ from parsers.ppt_xml_parser import PPTXMLParser
 
 EMR_BOILERPLATE = [
     r"LEMBRE-SE DE CLASSIFICAR AS QUESTÕES",
-    r"Link do banco: https://manager\.eumedicoresidente\.com\.br",
-    r"Senha: emr2025@",
+    r"Link do banco:",
+    r"Senha:",
     r"TUTORIAL PARA CLASSIFICAÇÃO",
     r"LISTRA DE TEMAS PARA CLASSIFICAÇÃO",
     r"SEU EMAIL",

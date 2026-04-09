@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 
 from services.job_manager import create_job, get_job, make_logger
-from security import require_api_key
+from security import require_api_key, validate_json_file
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
 
@@ -132,11 +132,10 @@ def _run_site_login(job_id: str):
 async def upload_chatgpt_session(file: UploadFile = File(...)):
     """
     Recebe o auth.json gerado localmente e salva no servidor.
-    Use isto quando o Railway não tiver sessão salva e você precisar
-    fazer o login no ChatGPT localmente para gerar o arquivo.
+    Requer autenticação via X-API-Key (aplicada no router).
     """
+    content = await validate_json_file(file)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    content = await file.read()
     CHATGPT_AUTH.write_bytes(content)
     return {"success": True, "message": "auth.json salvo com sucesso no servidor."}
 
@@ -145,10 +144,10 @@ async def upload_chatgpt_session(file: UploadFile = File(...)):
 async def upload_site_session(file: UploadFile = File(...)):
     """
     Recebe o storage_state.json gerado localmente e salva no servidor.
-    Use isto para autenticar o bot de extração de PDF sem precisar de tela.
+    Requer autenticação via X-API-Key (aplicada no router).
     """
+    content = await validate_json_file(file)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    content = await file.read()
     SITE_AUTH.write_bytes(content)
     return {"success": True, "message": "storage_state.json salvo com sucesso no servidor."}
 

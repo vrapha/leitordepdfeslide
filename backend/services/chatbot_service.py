@@ -32,8 +32,10 @@ class ChatGPTBot:
         args = [
             "--disable-blink-features=AutomationControlled",
             "--window-size=1280,800",
-            "--no-sandbox",
         ]
+        # --no-sandbox só habilitado em container (Railway define RAILWAY_ENVIRONMENT)
+        if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("UNSAFE_NO_SANDBOX"):
+            args.append("--no-sandbox")
 
         self.browser = self.playwright.chromium.launch(
             headless=self.headless,

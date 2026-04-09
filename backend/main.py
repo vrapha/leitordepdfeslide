@@ -14,8 +14,20 @@ _raw_origins = os.environ.get("ALLOWED_ORIGIN", "")
 ALLOWED_ORIGINS: list[str] = (
     [o.strip() for o in _raw_origins.split(",") if o.strip()]
     if _raw_origins
-    else ["*"]  # fallback apenas se a variável não estiver definida
+    else ["*"]
 )
+
+# Em produção (API_SECRET_KEY definida), nunca permitir wildcard
+if _is_production and "*" in ALLOWED_ORIGINS:
+    import sys
+    print(
+        "ERRO: ALLOWED_ORIGIN não está configurado. "
+        "Defina a variável no Railway com o domínio do Lovable. "
+        "Ex: https://meu-app.lovable.app",
+        file=sys.stderr,
+    )
+    # Bloqueia totalmente até que seja configurado corretamente
+    ALLOWED_ORIGINS = []
 
 # Oculta /docs e /redoc em produção (quando API_SECRET_KEY está definida)
 _is_production = bool(os.environ.get("API_SECRET_KEY", ""))

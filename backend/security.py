@@ -1,9 +1,13 @@
 """
 Segurança centralizada da aplicação.
 - API Key obrigatória em todas as rotas via header X-API-Key
-- Validação de tipo e tamanho de arquivo
+- Validação de tipo e tamanho por magic bytes (não apenas Content-Type)
 """
+import io
 import os
+import zipfile
+from pathlib import Path
+
 from fastapi import HTTPException, Security, UploadFile
 from fastapi.security.api_key import APIKeyHeader
 
@@ -16,15 +20,6 @@ _SECRET_KEY: str = os.environ.get("API_SECRET_KEY", "")
 MAX_FILE_SIZE_MB = 50
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
-ALLOWED_TYPES = {
-    "pdf": ["application/pdf"],
-    "pptx": [
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "application/octet-stream",  # alguns browsers enviam assim
-    ],
-    "json": ["application/json", "application/octet-stream"],
-}
-
 
 def require_api_key(api_key: str = Security(_api_key_header)) -> str:
     """Dependência FastAPI — rejeita se API key inválida ou ausente."""
@@ -36,28 +31,98 @@ def require_api_key(api_key: str = Security(_api_key_header)) -> str:
     if api_key != _SECRET_KEY:
         raise HTTPException(
             status_code=401,
-            detail="API Key inválida ou ausente. Use o header X-API-Key.",
+            detail="API Key inválida ou ausente.",
         )
     return api_key
 
 
-def validate_file(file: UploadFile, file_type: str) -> None:
-    """Valida content-type do arquivo enviado."""
-    allowed = ALLOWED_TYPES.get(file_type, [])
-    content_type = (file.content_type or "").split(";")[0].strip()
-    if allowed and content_type not in allowed:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Tipo de arquivo inválido: {content_type}. Esperado: {file_type.upper()}",
-        )
+def check_websocket_key(api_key: str) -> bool:
+    """Verifica API key para WebSocket (retorna bool em vez de raise)."""
+    if not _SECRET_KEY:
+        return False
+    return api_key == _SECRET_KEY
 
 
-async def validate_file_size(file: UploadFile) -> bytes:
-    """Lê o conteúdo e valida o tamanho. Retorna os bytes lidos."""
+async def validate_pdf(file: UploadFile) -> bytes:
+    """Valida e lê arquivo PDF — verifica magic bytes e tamanho."""
     content = await file.read()
+
     if len(content) > MAX_FILE_SIZE_BYTES:
         raise HTTPException(
             status_code=413,
             detail=f"Arquivo muito grande. Máximo: {MAX_FILE_SIZE_MB}MB",
         )
+    # Magic bytes do PDF: %PDF
+    if not content.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo inválido. Envie um PDF real.",
+        )
     return content
+
+
+async def validate_pptx(file: UploadFile) -> bytes:
+    """Valida e lê arquivo PPTX — verifica magic bytes ZIP e estrutura interna."""
+    content = await file.read()
+
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Arquivo muito grande. Máximo: {MAX_FILE_SIZE_MB}MB",
+        )
+    # PPTX é um ZIP — magic bytes: PK\x03\x04
+    if not content.startswith(b"PK\x03\x04"):
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo inválido. Envie um PPTX real.",
+        )
+    # Verifica estrutura interna do PPTX
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as z:
+            names = z.namelist()
+            if not any(n.startswith("ppt/slides/") for n in names):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Arquivo PPTX não contém slides válidos.",
+                )
+    except zipfile.BadZipFile:
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo PPTX corrompido.",
+        )
+    return content
+
+
+async def validate_json_file(file: UploadFile) -> bytes:
+    """Valida e lê arquivo JSON para upload de sessão."""
+    import json
+
+    content = await file.read()
+
+    if len(content) > 5 * 1024 * 1024:  # 5MB max para JSON de sessão
+        raise HTTPException(
+            status_code=413,
+            detail="Arquivo de sessão muito grande.",
+        )
+    try:
+        json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo inválido. Envie um JSON válido.",
+        )
+    return content
+
+
+def safe_output_path(source_path: str, suffix: str, uploads_dir: Path) -> Path:
+    """Gera caminho de saída seguro, garantindo que fique dentro de uploads_dir."""
+    src = Path(source_path).resolve()
+    out = src.parent / f"{src.stem}{suffix}"
+    # Garantia: arquivo de saída deve estar dentro do uploads_dir
+    try:
+        out.relative_to(uploads_dir.resolve())
+    except ValueError:
+        raise ValueError(
+            f"Tentativa de path traversal detectada: {out}"
+        )
+    return out
