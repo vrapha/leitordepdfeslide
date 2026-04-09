@@ -55,3 +55,14 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 @app.get("/")
 def root():
     return {"status": "ok", "message": "EMR Web App Backend"}
+
+
+@app.get("/health")
+def health():
+    """Diagnóstico — não expõe valores, só presença."""
+    key = os.environ.get("API_SECRET_KEY", "")
+    return {
+        "api_secret_key_set": bool(key),
+        "api_secret_key_length": len(key),
+        "allowed_origins": ALLOWED_ORIGINS,
+    }
