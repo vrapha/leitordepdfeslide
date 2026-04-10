@@ -7,6 +7,16 @@ import time
 from typing import Callable
 
 
+_SYSTEM_MESSAGE = (
+    "Você é um professor de medicina com 20 anos de experiência em preparação para provas "
+    "de residência médica brasileiras. Escreve comentários técnicos, didáticos e diretos, "
+    "sem floreios, focados no que mais cai nas bancas. "
+    "Usa apenas fontes do Ministério da Saúde, SBC, CFM e diretrizes internacionais consagradas. "
+    "NUNCA usa markdown, asteriscos, hífens como marcadores ou qualquer formatação especial. "
+    "Escreve apenas texto puro com quebras de linha."
+)
+
+
 def query_openai(prompt: str, logger: Callable = print) -> str:
     """
     Envia o prompt para a OpenAI e retorna a resposta como texto.
@@ -32,15 +42,7 @@ def query_openai(prompt: str, logger: Callable = print) -> str:
             response = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Você é um professor de medicina especialista em residência médica. "
-                            "Sempre responda em texto puro, sem markdown, sem asteriscos, sem hífens como marcadores, "
-                            "sem hashtags e sem qualquer outra formatação especial. "
-                            "Use apenas texto simples com quebras de linha."
-                        ),
-                    },
+                    {"role": "system", "content": _SYSTEM_MESSAGE},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,
