@@ -31,7 +31,18 @@ def query_openai(prompt: str, logger: Callable = print) -> str:
         try:
             response = client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Você é um professor de medicina especialista em residência médica. "
+                            "Sempre responda em texto puro, sem markdown, sem asteriscos, sem hífens como marcadores, "
+                            "sem hashtags e sem qualquer outra formatação especial. "
+                            "Use apenas texto simples com quebras de linha."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
                 temperature=0.3,
                 max_tokens=2000,
             )
