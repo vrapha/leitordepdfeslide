@@ -163,6 +163,16 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
     return prompt
 
 
+def _clean_response(text: str) -> str:
+    """Remove linhas em branco entre alternativas e normaliza espaçamento."""
+    import re
+    # Remove linha em branco entre "Letra X:" consecutivas
+    text = re.sub(r'\n\n(Letra [A-E]:)', r'\n\1', text)
+    # Reduz múltiplas linhas em branco para no máximo uma
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
 def save_response_to_notes(parser: PPTParser, slide_idx: int, response: str, output_file: str):
     """Salva a resposta nas notas do slide, sempre com Especialidade/Assunto em branco no topo."""
     slide = parser.prs.slides[slide_idx]
@@ -172,7 +182,7 @@ def save_response_to_notes(parser: PPTParser, slide_idx: int, response: str, out
     prefix = "\n\n" if current_notes else ""
     # Especialidade e Assunto sempre em branco — professor preenche depois
     header = "Especialidade:\n\nAssunto:\n\n"
-    full_text = prefix + header + response
+    full_text = prefix + header + _clean_response(response)
     text_frame.text = current_notes
 
     for line in full_text.split("\n"):
