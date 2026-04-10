@@ -24,7 +24,7 @@ def query_openai(prompt: str, logger: Callable = print) -> str:
             "OPENAI_API_KEY não configurada. Adicione a variável de ambiente no Railway."
         )
 
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     client = OpenAI(api_key=api_key)
 
     for attempt in range(1, 4):
