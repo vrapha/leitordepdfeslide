@@ -1,0 +1,12 @@
+sessions/
+uploads/
+*.json
+*.env
+.env*
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.log
+.git/

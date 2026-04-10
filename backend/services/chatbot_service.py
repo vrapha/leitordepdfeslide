@@ -52,7 +52,7 @@ class ChatGPTBot:
         }
 
         if os.path.exists(self.auth_file):
-            self.log(f"Carregando sessão de {self.auth_file}")
+            self.log("Carregando sessão existente...")
             context_kwargs["storage_state"] = self.auth_file
         else:
             self.log("Sem sessão salva. Iniciando login manual.")
@@ -90,7 +90,7 @@ class ChatGPTBot:
         if not email or not password:
             return False
 
-        self.log("Tentando login automático com credenciais...")
+        self.log("Tentando login automático...")
         try:
             # Clicar em "Log in"
             for sel in ["a[href*='login']", "button:has-text('Log in')", "[data-testid='login-button']"]:
@@ -107,7 +107,7 @@ class ChatGPTBot:
             for sel in ["input[type='email']", "input[name='email']", "#email-input"]:
                 try:
                     self.page.fill(sel, email, timeout=5000)
-                    self.log("Email preenchido.")
+                    self.log("Credencial 1 preenchida.")
                     break
                 except Exception:
                     pass
@@ -129,7 +129,7 @@ class ChatGPTBot:
             for sel in ["input[type='password']", "input[name='password']", "#password"]:
                 try:
                     self.page.fill(sel, password, timeout=5000)
-                    self.log("Senha preenchida.")
+                    self.log("Credencial 2 preenchida.")
                     break
                 except Exception:
                     pass

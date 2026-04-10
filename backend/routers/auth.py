@@ -114,7 +114,7 @@ def _run_site_login(job_id: str):
                 on_admin = "/admin/resources" in url or url.endswith("/admin")
                 if on_admin:
                     context.storage_state(path=str(SITE_AUTH))
-                    logger(f"Login detectado! Sessão salva em {SITE_AUTH}")
+                    logger("Login detectado! Sessão salva.")
                     job.result = {"success": True}
                     job.status = "done"
                     break

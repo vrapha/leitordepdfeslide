@@ -12,7 +12,6 @@ from routers import slides, pdf, auth
 _is_production = bool(os.environ.get("API_SECRET_KEY", ""))
 
 # Em produção, defina ALLOWED_ORIGIN no Railway com o domínio do Lovable.
-# Ex: https://meu-app.lovable.app
 _raw_origins = os.environ.get("ALLOWED_ORIGIN", "")
 ALLOWED_ORIGINS: list[str] = (
     [o.strip() for o in _raw_origins.split(",") if o.strip()]
@@ -20,23 +19,21 @@ ALLOWED_ORIGINS: list[str] = (
     else ["*"]
 )
 
-# Em produção com wildcard: bloqueia CORS totalmente até configurar corretamente
+# Em produção com wildcard: bloqueia CORS totalmente
 if _is_production and "*" in ALLOWED_ORIGINS:
     print(
-        "AVISO: ALLOWED_ORIGIN não configurado. "
-        "Defina no Railway com o domínio do Lovable (ex: https://meu-app.lovable.app). "
-        "CORS bloqueado até que seja configurado.",
+        "AVISO: ALLOWED_ORIGIN não configurado. CORS bloqueado.",
         file=sys.stderr,
     )
     ALLOWED_ORIGINS = []
 
 app = FastAPI(
     title="EMR Web App",
-    description="Leitor de Slides PPTX + Leitor de PDF com automação Playwright",
     version="1.0.0",
-    docs_url=None if _is_production else "/docs",
-    redoc_url=None if _is_production else "/redoc",
-    openapi_url=None if _is_production else "/openapi.json",
+    # Docs/schema sempre ocultos — nunca expor em produção
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_middleware(
@@ -44,7 +41,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
 
 app.include_router(slides.router, prefix="/api/slides", tags=["slides"])
@@ -54,18 +51,13 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 
 @app.get("/")
 def root():
-    return {"status": "ok", "message": "EMR Web App Backend"}
+    return {"status": "ok"}
 
 
 @app.get("/health")
 def health():
-    """Diagnóstico — não expõe valores, só presença."""
-    key = os.environ.get("API_SECRET_KEY", "")
-    # Lista nomes das variáveis disponíveis (sem valores)
-    env_keys = [k for k in os.environ.keys() if not k.startswith("PATH")]
+    """Diagnóstico mínimo — apenas confirma se a chave está configurada."""
     return {
-        "api_secret_key_set": bool(key),
-        "api_secret_key_length": len(key),
-        "allowed_origins": ALLOWED_ORIGINS,
-        "env_keys_available": sorted(env_keys),
+        "api_secret_key_set": bool(os.environ.get("API_SECRET_KEY", "")),
+        "cors_configured": bool(_raw_origins),
     }

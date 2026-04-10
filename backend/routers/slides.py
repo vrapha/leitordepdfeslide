@@ -56,19 +56,22 @@ async def analyze_slides(
                     "alternatives": item.get("alternatives", []),
                     "correct_answer": item.get("correct_answer"),
                 })
+            # pptx_path armazenado internamente no job, não exposto na resposta
             job.result = {"slides": clean, "pptx_path": str(pptx_path), "job_id": job.id}
             job.status = "done"
         except Exception as e:
-            logger(f"Erro: {e}", "ERROR")
+            logger("Erro ao processar arquivo.", "ERROR")
             job.status = "error"
-            job.error = str(e)
+            job.error = "Erro ao processar arquivo."
 
     await loop.run_in_executor(None, run)
 
     if job.status == "error":
         return {"error": job.error, "job_id": job.id}
 
-    return job.result
+    # Nunca expor pptx_path na resposta — apenas slides e job_id
+    result = job.result or {}
+    return {"job_id": result.get("job_id"), "slides": result.get("slides", [])}
 
 
 @router.post("/process")
