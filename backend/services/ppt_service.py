@@ -172,7 +172,7 @@ def save_response_to_notes(parser: PPTParser, slide_idx: int, response: str, out
     current_notes = text_frame.text
     prefix = "\n\n" if current_notes else ""
     # Especialidade e Assunto sempre em branco — professor preenche depois
-    header = "Especialidade:\n\nAssunto:\n\n"
+    header = "Especialidade:\nAssunto:\n\n"
     full_text = prefix + header + _clean_response(response)
     text_frame.text = current_notes
 
