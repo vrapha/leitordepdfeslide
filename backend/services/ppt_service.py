@@ -153,9 +153,11 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
 
 
 def _clean_response(text: str) -> str:
-    """Remove linhas em branco entre alternativas e normaliza espaçamento."""
+    """Normaliza espaçamento e garante quebra de linha entre alternativas."""
     import re
-    # Remove linha em branco entre "Letra X:" consecutivas
+    # Garante que cada "Letra X:" comece numa nova linha (caso modelo junte tudo)
+    text = re.sub(r'\s+(Letra [A-E]:)', r'\n\1', text)
+    # Remove linha em branco extra entre "Letra X:" consecutivas
     text = re.sub(r'\n\n(Letra [A-E]:)', r'\n\1', text)
     # Reduz múltiplas linhas em branco para no máximo uma
     text = re.sub(r'\n{3,}', '\n\n', text)
