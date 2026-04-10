@@ -69,20 +69,120 @@ class ChatGPTBot:
         except Exception as e:
             self.log(f"Erro de navegação: {e}")
 
+    def _is_logged_in(self) -> bool:
+        """Verifica se já está logado no ChatGPT."""
+        try:
+            return (
+                self.page.is_visible("#prompt-textarea", timeout=3000)
+                or self.page.is_visible("div[contenteditable='true']", timeout=3000)
+                or self.page.is_visible("button[data-testid='send-button']", timeout=3000)
+            )
+        except Exception:
+            return False
+
+    def _try_auto_login(self) -> bool:
+        """
+        Tenta login automático usando CHATGPT_EMAIL e CHATGPT_PASSWORD do ambiente.
+        Retorna True se conseguiu logar.
+        """
+        email = os.environ.get("CHATGPT_EMAIL", "")
+        password = os.environ.get("CHATGPT_PASSWORD", "")
+        if not email or not password:
+            return False
+
+        self.log("Tentando login automático com credenciais...")
+        try:
+            # Clicar em "Log in"
+            for sel in ["a[href*='login']", "button:has-text('Log in')", "[data-testid='login-button']"]:
+                try:
+                    if self.page.is_visible(sel, timeout=3000):
+                        self.page.click(sel)
+                        break
+                except Exception:
+                    pass
+
+            time.sleep(2)
+
+            # Preencher email
+            for sel in ["input[type='email']", "input[name='email']", "#email-input"]:
+                try:
+                    self.page.fill(sel, email, timeout=5000)
+                    self.log("Email preenchido.")
+                    break
+                except Exception:
+                    pass
+
+            time.sleep(0.5)
+
+            # Clicar em continuar
+            for sel in ["button[type='submit']", "button:has-text('Continue')", "button:has-text('Continuar')"]:
+                try:
+                    if self.page.is_visible(sel, timeout=3000):
+                        self.page.click(sel)
+                        break
+                except Exception:
+                    pass
+
+            time.sleep(2)
+
+            # Preencher senha
+            for sel in ["input[type='password']", "input[name='password']", "#password"]:
+                try:
+                    self.page.fill(sel, password, timeout=5000)
+                    self.log("Senha preenchida.")
+                    break
+                except Exception:
+                    pass
+
+            time.sleep(0.5)
+
+            # Submeter
+            for sel in ["button[type='submit']", "button:has-text('Continue')", "button:has-text('Log in')"]:
+                try:
+                    if self.page.is_visible(sel, timeout=3000):
+                        self.page.click(sel)
+                        break
+                except Exception:
+                    pass
+
+            # Aguardar login completar
+            for i in range(30):
+                time.sleep(2)
+                if self._is_logged_in():
+                    self.log("Login automático concluído!")
+                    return True
+
+            return False
+
+        except Exception as e:
+            self.log(f"Login automático falhou: {e}")
+            return False
+
     def ensure_login(self, timeout_seconds: int = 300):
-        """Aguarda login manual e salva sessão."""
-        self.log("Aguardando login... (faça login manualmente se necessário)")
+        """Verifica login. Tenta automático via credenciais, senão aguarda manual."""
+        # Já logado?
+        if self._is_logged_in():
+            self.log("Sessão ativa detectada!")
+            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+            self.context.storage_state(path=self.auth_file)
+            return
+
+        # Tenta login automático com email/senha
+        if self._try_auto_login():
+            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+            self.context.storage_state(path=self.auth_file)
+            self.log("Sessão salva após login automático.")
+            return
+
+        # Fallback: aguarda login manual
+        self.log("Login automático não disponível. Aguardando login manual...")
         for i in range(timeout_seconds):
             try:
-                if (
-                    self.page.is_visible("#prompt-textarea")
-                    or self.page.is_visible("div[contenteditable='true']")
-                    or self.page.is_visible("button[data-testid='send-button']")
-                ):
+                if self._is_logged_in():
                     self.log("Login detectado!")
                     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
                     self.context.storage_state(path=self.auth_file)
-                    self.log(f"Sessão salva em {self.auth_file}")
+                    self.log("Sessão salva.")
                     return
             except Exception:
                 pass
