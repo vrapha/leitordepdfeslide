@@ -131,8 +131,6 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
         "Não use asteriscos (**), underlines, hífens como marcadores, hashtags (#) nem qualquer outra formatação markdown. "
         "Use apenas texto simples com quebras de linha.\n\n"
         "Comente a questão abaixo seguindo EXATAMENTE esta estrutura e estes rótulos:\n\n"
-        "Especialidade:\n\n"
-        "Assunto:\n\n"
         "Dica de Prova:\n"
         "[frase curta e prática com aproximadamente 60 palavras, como um macete ou orientação objetiva "
         "que ajude o aluno a lembrar como acertar questões semelhantes. "
@@ -161,13 +159,15 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
 
 
 def save_response_to_notes(parser: PPTParser, slide_idx: int, response: str, output_file: str):
-    """Salva a resposta do ChatGPT nas notas do slide."""
+    """Salva a resposta nas notas do slide, sempre com Especialidade/Assunto em branco no topo."""
     slide = parser.prs.slides[slide_idx]
     notes_slide = slide.notes_slide
     text_frame = notes_slide.notes_text_frame
     current_notes = text_frame.text
     prefix = "\n\n" if current_notes else ""
-    full_text = prefix + response
+    # Especialidade e Assunto sempre em branco — professor preenche depois
+    header = "Especialidade:\n\nAssunto:\n\n"
+    full_text = prefix + header + response
     text_frame.text = current_notes
 
     for line in full_text.split("\n"):
