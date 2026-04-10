@@ -77,7 +77,7 @@ def normalize_for_comparison(s: str) -> str:
 
 
 def count_pdf_alternatives(alts: Dict[str, str]) -> int:
-    return len({v.strip() for k in ["A", "B", "C", "D", "E"] if k in alts and alts[k].strip()})
+    return len({alts[k].strip() for k in ["A", "B", "C", "D", "E"] if k in alts and alts[k].strip()})
 
 
 def is_certo_errado_alts(alts: Dict[str, str]) -> bool:
