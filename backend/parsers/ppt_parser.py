@@ -253,7 +253,6 @@ class PPTParser:
             gabarito = self._load_gabarito(gabarito_path)
 
         slides_data = []
-        buffered_question: dict | None = None
 
         for slide_idx, slide in enumerate(self.prs.slides):
             all_shapes = list(self.iter_all_shapes(slide.shapes))
@@ -262,6 +261,37 @@ class PPTParser:
                 if s.has_text_frame and s.text_frame.text.strip()
             ]
 
+            # --- Estratégia 1: shapes nomeados [enunciado] / [alternativas] ---
+            named = {s.name.lower(): s for s in all_shapes if hasattr(s, "name")}
+            enunciado_shape = named.get("enunciado")
+            alts_shape = named.get("alternativas")
+            codigo_shape = named.get("codigo")
+
+            if enunciado_shape and alts_shape:
+                question_text = enunciado_shape.text_frame.text.strip()
+                alternatives = [
+                    p.text.strip()
+                    for p in alts_shape.text_frame.paragraphs
+                    if p.text.strip()
+                ]
+                # Detectar número de questão via shape [codigo] ou texto
+                q_num = self._extract_q_num_from_shapes(
+                    codigo_shape, enunciado_shape, text_blocks
+                )
+                correct_answer = self._get_answer(
+                    gabarito, slide, slide_idx, len(slides_data), [], text_blocks
+                )
+                if question_text:
+                    slides_data.append({
+                        "slide_index": slide_idx,
+                        "question_number": q_num or (len(slides_data) + 1),
+                        "question": question_text,
+                        "alternatives": alternatives,
+                        "correct_answer": correct_answer,
+                    })
+                continue
+
+            # --- Estratégia 2: detecção por padrão A)/B)/C) ---
             question_text = ""
             alternatives: list[str] = []
             alt_block_candidates: list = []
@@ -279,24 +309,16 @@ class PPTParser:
                     if len(text) > 20:
                         question_text += (" " + text if question_text else text)
 
-            # Se não encontrou alternativas com prefixo A/B/C, tenta extrair do texto
+            # Estratégia 3: extração por heurística de fim de enunciado
             if not alternatives and question_text:
                 extracted_q, extracted_alts = self._extract_alts_from_text(question_text)
                 if extracted_alts:
                     question_text = extracted_q
                     alternatives = extracted_alts
 
-            # Tentar detectar resposta
-            correct_answer = None
-            if gabarito:
-                correct_answer = self._get_gabarito_answer(gabarito, slide_idx, len(slides_data))
+            if not question_text and not alternatives:
+                continue
 
-            if correct_answer is None and alt_block_candidates:
-                correct_answer = self.detect_correct_answer_visual(slide, alt_block_candidates)
-            elif correct_answer is None:
-                correct_answer = self.detect_correct_answer_visual(slide)
-
-            # Detectar número da questão
             q_num = None
             for shape in text_blocks:
                 text = shape.text_frame.text.strip()
@@ -307,47 +329,46 @@ class PPTParser:
                     q_num = int(m.group(1))
                     break
 
-            if not alternatives and buffered_question:
-                # Se o slide atual tem texto substancial (> 200 chars), é uma nova questão
-                # Não é continuação — flush o buffer e trata como nova questão
-                if len(question_text) > 200:
-                    slides_data.append(buffered_question)
-                    buffered_question = None
-                    # Cai para criação de nova questão abaixo
-                else:
-                    buffered_question["question"] += "\n" + question_text
-                    continue
+            correct_answer = self._get_answer(
+                gabarito, slide, slide_idx, len(slides_data), alt_block_candidates, text_blocks
+            )
 
-            if buffered_question and alternatives:
-                buffered_question["alternatives"] = alternatives
-                buffered_question["correct_answer"] = correct_answer
-                slides_data.append(buffered_question)
-                buffered_question = None
-                continue
-
-            if question_text and not alternatives:
-                buffered_question = {
-                    "slide_index": slide_idx,
-                    "question_number": q_num or (len(slides_data) + 1),
-                    "question": question_text,
-                    "alternatives": [],
-                    "correct_answer": correct_answer,
-                }
-                continue
-
-            if question_text or alternatives:
-                slides_data.append({
-                    "slide_index": slide_idx,
-                    "question_number": q_num or (len(slides_data) + 1),
-                    "question": question_text,
-                    "alternatives": alternatives,
-                    "correct_answer": correct_answer,
-                })
-
-        if buffered_question:
-            slides_data.append(buffered_question)
+            slides_data.append({
+                "slide_index": slide_idx,
+                "question_number": q_num or (len(slides_data) + 1),
+                "question": question_text,
+                "alternatives": alternatives,
+                "correct_answer": correct_answer,
+            })
 
         return slides_data
+
+    def _extract_q_num_from_shapes(self, codigo_shape, enunciado_shape, text_blocks) -> int | None:
+        """Extrai número da questão do shape [codigo] ou do enunciado."""
+        # Tenta extrair de [codigo] primeiro: ex "SESDFDF2026R11Q19" → 19
+        if codigo_shape:
+            code = codigo_shape.text_frame.text.strip()
+            m = re.search(r"Q(\d+)$", code, re.IGNORECASE)
+            if m:
+                return int(m.group(1))
+        # Tenta do enunciado
+        if enunciado_shape:
+            text = enunciado_shape.text_frame.text.strip()
+            m = re.search(r"quest[aã]o\s+(\d+)", text, re.IGNORECASE)
+            if m:
+                return int(m.group(1))
+        return None
+
+    def _get_answer(self, gabarito, slide, slide_idx, q_count, alt_block_candidates, text_blocks) -> str | None:
+        """Detecta resposta correta via gabarito ou marcador visual."""
+        correct_answer = None
+        if gabarito:
+            correct_answer = self._get_gabarito_answer(gabarito, slide_idx, q_count)
+        if correct_answer is None and alt_block_candidates:
+            correct_answer = self.detect_correct_answer_visual(slide, alt_block_candidates)
+        elif correct_answer is None:
+            correct_answer = self.detect_correct_answer_visual(slide)
+        return correct_answer
 
     def _extract_alts_from_text(self, text: str) -> tuple[str, list[str]]:
         """
