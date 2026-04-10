@@ -16,6 +16,9 @@ frontend/node_modules/
 frontend/dist/
 frontend/.env
 
+# Scripts locais com credenciais — NUNCA subir ao GitHub
+login_manager.py
+
 # Misc
 .DS_Store
 *.log
