@@ -191,6 +191,23 @@ def _should_process(q_num, start_question: int) -> bool:
         return True
 
 
+@router.get("/status/{job_id}")
+async def get_job_status(job_id: str):
+    """Retorna status e logs acumulados do job. Usado para polling quando WebSocket não está disponível."""
+    job = get_job(job_id)
+    if not job:
+        return {"status": "not_found", "logs": [], "error": "Job não encontrado"}
+    return {
+        "status": job.status,
+        "logs": job.logs,
+        "error": job.error,
+        "result": {
+            "processed": job.result.get("processed") if job.result else None,
+            "output_file": bool(job.result.get("output_file")) if job.result else False,
+        } if job.result else None,
+    }
+
+
 @router.get("/download/{job_id}")
 async def download_result(job_id: str):
     """Baixa o PPTX processado."""
