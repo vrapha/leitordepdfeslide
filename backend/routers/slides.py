@@ -6,7 +6,6 @@ Router: /api/slides
 - WS   /ws/{job_id}       — stream de logs em tempo real
 """
 import asyncio
-import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -16,7 +15,7 @@ from fastapi.responses import FileResponse
 
 from services.job_manager import create_job, get_job, make_logger
 from services.ppt_service import analyze_ppt, build_prompt, save_response_to_notes
-from services.chatbot_service import ChatGPTBot
+from services.openai_service import query_openai
 from parsers.ppt_parser import PPTParser
 from security import require_api_key, check_websocket_key, validate_pptx, safe_output_path
 
@@ -109,7 +108,7 @@ def _run_processing_thread(
     slides_data: list[dict],
     start_question: int,
 ):
-    """Roda em background thread (Playwright é síncrono)."""
+    """Processa questões via OpenAI API em background thread."""
     job = get_job(job_id)
     if not job:
         return
@@ -118,7 +117,7 @@ def _run_processing_thread(
     job.status = "running"
 
     valid = [s for s in slides_data if s.get("correct_answer")]
-    logger(f"Iniciando processamento de {len(valid)} questões.")
+    logger(f"Iniciando processamento de {len(valid)} questões via OpenAI.")
 
     if not valid:
         logger("Nenhuma resposta detectada. Abortando.")
@@ -127,51 +126,33 @@ def _run_processing_thread(
 
     output_file = str(safe_output_path(pptx_path, "_Analyzed.pptx", UPLOADS_DIR))
 
-    # Em servidor (Railway), sempre headless; localmente usa interface
-    is_server = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("UNSAFE_NO_SANDBOX"))
-    bot = ChatGPTBot(headless=is_server, logger=logger)
-    try:
-        bot.start()
-        logger("Verificando sessão do ChatGPT...")
-        bot.ensure_login()
-    except Exception as e:
-        logger(f"Falha no login: {e}", "ERROR")
-        bot.close()
-        job.status = "error"
-        job.error = str(e)
-        return
-
     try:
         parser = PPTParser(pptx_path)
     except Exception as e:
-        logger(f"Erro ao reabrir PPTX: {e}", "ERROR")
-        bot.close()
+        logger("Erro ao abrir arquivo PPTX.", "ERROR")
         job.status = "error"
-        job.error = str(e)
+        job.error = "Erro ao abrir arquivo PPTX."
         return
 
     processed = 0
-    RESET_INTERVAL = 25
+    total = sum(
+        1 for s in slides_data
+        if s.get("correct_answer") and s.get("correct_answer") != "None"
+        and _should_process(s.get("question_number", 0), start_question)
+    )
 
     for item in slides_data:
         q_num = item.get("question_number", 0)
         correct = item.get("correct_answer")
 
-        try:
-            if int(q_num) < start_question:
-                continue
-        except Exception:
-            pass
-
-        if not correct or correct == "None":
-            logger(f"Pulando Q{q_num} — sem resposta")
+        if not _should_process(q_num, start_question):
             continue
 
-        if processed > 0 and processed % RESET_INTERVAL == 0:
-            logger(f"Resetando conversa após {processed} questões...")
-            bot.new_conversation()
+        if not correct or correct == "None":
+            logger(f"Pulando Q{q_num} — sem resposta.")
+            continue
 
-        logger(f"Processando Q{q_num} (Slide {item['slide_index'] + 1}) — Resposta: {correct}")
+        logger(f"[{processed + 1}/{total}] Processando Q{q_num} — Gabarito: {correct}")
 
         prompt = build_prompt(
             item.get("question", ""),
@@ -179,28 +160,35 @@ def _run_processing_thread(
             correct,
         )
 
-        response = bot.query(prompt)
-
-        if response.startswith("Error:"):
-            logger(f"Erro na Q{q_num}: {response}. Tentando novamente...")
-            bot.new_conversation()
-            response = bot.query(prompt)
-            if response.startswith("Error:"):
-                logger(f"Q{q_num} falhou após retry. Pulando.")
-                continue
+        try:
+            response = query_openai(prompt, logger)
+        except RuntimeError as e:
+            logger(str(e), "ERROR")
+            job.status = "error"
+            job.error = str(e)
+            return
+        except Exception:
+            logger(f"Q{q_num} falhou. Pulando.", "ERROR")
+            continue
 
         try:
             save_response_to_notes(parser, item["slide_index"], response, output_file)
-            logger(f"Slide {item['slide_index'] + 1} salvo em {Path(output_file).name}")
+            logger(f"Q{q_num} salva no slide {item['slide_index'] + 1}.")
         except Exception as e:
-            logger(f"Erro ao salvar slide {item['slide_index'] + 1}: {e}", "ERROR")
+            logger(f"Erro ao salvar Q{q_num}: {e}", "ERROR")
 
         processed += 1
 
-    bot.close()
     job.result = {"output_file": output_file, "processed": processed}
     job.status = "done"
-    logger(f"Concluído! {processed} questões processadas. Arquivo: {Path(output_file).name}")
+    logger(f"Concluído! {processed} questões processadas.")
+
+
+def _should_process(q_num, start_question: int) -> bool:
+    try:
+        return int(q_num) >= int(start_question)
+    except Exception:
+        return True
 
 
 @router.get("/download/{job_id}")
