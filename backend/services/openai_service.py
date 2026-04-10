@@ -44,7 +44,7 @@ def query_openai(prompt: str, logger: Callable = print) -> str:
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,
-                max_tokens=2000,
+                max_tokens=3000,
             )
             return response.choices[0].message.content or ""
         except RateLimitError:
