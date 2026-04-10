@@ -124,7 +124,8 @@ def _run_processing_thread(
         job.status = "done"
         return
 
-    output_file = str(safe_output_path(pptx_path, "_Analyzed.pptx", UPLOADS_DIR))
+    # Caminho de saída baseado no job_id — sempre previsível e sem dependência do nome original
+    output_file = str(UPLOADS_DIR / f"{job_id}_result.pptx")
 
     try:
         parser = PPTParser(pptx_path)
@@ -179,9 +180,16 @@ def _run_processing_thread(
 
         processed += 1
 
+    if not Path(output_file).exists():
+        logger("ERRO: arquivo de saída não foi criado no disco.", "ERROR")
+        job.status = "error"
+        job.error = "Arquivo de saída não foi gerado."
+        return
+
+    file_size_kb = Path(output_file).stat().st_size // 1024
     job.result = {"output_file": output_file, "processed": processed}
     job.status = "done"
-    logger(f"Concluído! {processed} questões processadas.")
+    logger(f"Concluído! {processed} questões processadas. Arquivo: {file_size_kb}KB")
 
 
 def _should_process(q_num, start_question: int) -> bool:
