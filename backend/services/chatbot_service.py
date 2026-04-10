@@ -55,7 +55,7 @@ class ChatGPTBot:
             self.log("Carregando sessão existente...")
             context_kwargs["storage_state"] = self.auth_file
         else:
-            self.log("Sem sessão salva. Iniciando login manual.")
+            self.log("Sem sessão salva.")
 
         self.context = self.browser.new_context(**context_kwargs)
         self.page = self.context.new_page()
@@ -65,7 +65,7 @@ class ChatGPTBot:
 
         self.log("Navegando para ChatGPT...")
         try:
-            self.page.goto("https://chatgpt.com/", wait_until="commit", timeout=45000)
+            self.page.goto("https://chatgpt.com/", wait_until="networkidle", timeout=60000)
         except Exception as e:
             self.log(f"Erro de navegação: {e}")
 
@@ -92,25 +92,47 @@ class ChatGPTBot:
 
         self.log("Tentando login automático...")
         try:
+            # Navegar para página de login diretamente
+            self.page.goto("https://chatgpt.com/auth/login", wait_until="networkidle", timeout=30000)
+            time.sleep(2)
+
             # Clicar em "Log in"
-            for sel in ["a[href*='login']", "button:has-text('Log in')", "[data-testid='login-button']"]:
+            login_clicked = False
+            for sel in [
+                "button:has-text('Log in')",
+                "a:has-text('Log in')",
+                "[data-testid='login-button']",
+                "a[href*='/auth/login']",
+            ]:
                 try:
                     if self.page.is_visible(sel, timeout=3000):
                         self.page.click(sel)
+                        login_clicked = True
                         break
                 except Exception:
                     pass
 
-            time.sleep(2)
+            if login_clicked:
+                time.sleep(3)
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
 
             # Preencher email
-            for sel in ["input[type='email']", "input[name='email']", "#email-input"]:
+            email_filled = False
+            for sel in ["input[type='email']", "input[name='email']", "#email-input", "input[autocomplete='email']"]:
                 try:
-                    self.page.fill(sel, email, timeout=5000)
-                    self.log("Credencial 1 preenchida.")
+                    self.page.wait_for_selector(sel, timeout=5000)
+                    self.page.fill(sel, email)
+                    email_filled = True
                     break
                 except Exception:
                     pass
+
+            if not email_filled:
+                self.log("Campo de email não encontrado.")
+                return False
 
             time.sleep(0.5)
 
@@ -123,16 +145,26 @@ class ChatGPTBot:
                 except Exception:
                     pass
 
-            time.sleep(2)
+            time.sleep(3)
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
 
             # Preencher senha
+            password_filled = False
             for sel in ["input[type='password']", "input[name='password']", "#password"]:
                 try:
-                    self.page.fill(sel, password, timeout=5000)
-                    self.log("Credencial 2 preenchida.")
+                    self.page.wait_for_selector(sel, timeout=8000)
+                    self.page.fill(sel, password)
+                    password_filled = True
                     break
                 except Exception:
                     pass
+
+            if not password_filled:
+                self.log("Campo de senha não encontrado.")
+                return False
 
             time.sleep(0.5)
 
@@ -145,7 +177,8 @@ class ChatGPTBot:
                 except Exception:
                     pass
 
-            # Aguardar login completar
+            # Aguardar login completar (até 60s)
+            self.log("Aguardando confirmação de login...")
             for i in range(30):
                 time.sleep(2)
                 if self._is_logged_in():
@@ -155,12 +188,28 @@ class ChatGPTBot:
             return False
 
         except Exception as e:
-            self.log(f"Login automático falhou: {e}")
+            self.log(f"Login automático falhou.")
             return False
 
     def ensure_login(self, timeout_seconds: int = 300):
         """Verifica login. Tenta automático via credenciais, senão aguarda manual."""
+        is_headless = self.headless
+
         # Já logado?
+        if self._is_logged_in():
+            self.log("Sessão ativa detectada!")
+            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+            self.context.storage_state(path=self.auth_file)
+            return
+
+        # Aguarda a página carregar completamente antes de tentar login
+        try:
+            time.sleep(3)
+            self.page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+
+        # Segunda tentativa de verificar login (página pode ter carregado)
         if self._is_logged_in():
             self.log("Sessão ativa detectada!")
             SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -174,8 +223,15 @@ class ChatGPTBot:
             self.log("Sessão salva após login automático.")
             return
 
-        # Fallback: aguarda login manual
-        self.log("Login automático não disponível. Aguardando login manual...")
+        # Em modo headless (servidor): não aguardar login manual — falha imediatamente
+        if is_headless:
+            raise RuntimeError(
+                "Sessão do ChatGPT expirada ou inválida. "
+                "Faça login localmente e envie o auth.json via /api/auth/chatgpt/upload."
+            )
+
+        # Modo com interface: aguarda login manual
+        self.log("Aguardando login manual no ChatGPT...")
         for i in range(timeout_seconds):
             try:
                 if self._is_logged_in():

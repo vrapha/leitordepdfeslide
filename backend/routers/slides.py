@@ -6,6 +6,7 @@ Router: /api/slides
 - WS   /ws/{job_id}       — stream de logs em tempo real
 """
 import asyncio
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -88,7 +89,12 @@ async def process_slides(
     start_question: int = int(job_data.get("start_question", 0))
 
     source_job = get_job(source_job_id)
-    pptx_path = source_job.result["pptx_path"] if source_job and source_job.result else ""
+    if not source_job or not source_job.result:
+        return {"error": "Job de análise não encontrado. Reenvie o arquivo."}
+
+    pptx_path = source_job.result.get("pptx_path", "")
+    if not pptx_path or not Path(pptx_path).exists():
+        return {"error": "Arquivo PPTX original não encontrado no servidor."}
 
     process_job = create_job()
     background_tasks.add_task(
@@ -121,10 +127,12 @@ def _run_processing_thread(
 
     output_file = str(safe_output_path(pptx_path, "_Analyzed.pptx", UPLOADS_DIR))
 
-    bot = ChatGPTBot(headless=False, logger=logger)
+    # Em servidor (Railway), sempre headless; localmente usa interface
+    is_server = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("UNSAFE_NO_SANDBOX"))
+    bot = ChatGPTBot(headless=is_server, logger=logger)
     try:
         bot.start()
-        logger("Aguardando login no ChatGPT...")
+        logger("Verificando sessão do ChatGPT...")
         bot.ensure_login()
     except Exception as e:
         logger(f"Falha no login: {e}", "ERROR")
