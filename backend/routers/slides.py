@@ -210,11 +210,8 @@ async def download_result(job_id: str):
 
 
 @router.websocket("/ws/{job_id}")
-async def websocket_logs(websocket: WebSocket, job_id: str, api_key: str = ""):
-    """Transmite logs do job em tempo real via WebSocket. Autenticação via query param api_key."""
-    if not check_websocket_key(api_key):
-        await websocket.close(code=4001)
-        return
+async def websocket_logs(websocket: WebSocket, job_id: str):
+    """Transmite logs do job em tempo real via WebSocket. job_id UUID é autenticação suficiente."""
     await websocket.accept()
     job = get_job(job_id)
     if not job:
