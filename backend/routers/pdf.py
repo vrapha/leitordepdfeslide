@@ -57,7 +57,7 @@ def _run_extraction_thread(job_id: str, pdf_path: str, target: int):
         codes = run_pdf_extraction(
             pdf_path=pdf_path,
             logger=logger,
-            headless=False,
+            headless=True,
             target_encontradas=target,
         )
         job.result = {"codes": codes}

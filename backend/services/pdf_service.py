@@ -397,20 +397,39 @@ def goto_filter_page(page, q: str, page_num: int):
 
 def wait_results(page) -> None:
     try:
-        page.wait_for_load_state("networkidle", timeout=15000)
+        page.wait_for_load_state("networkidle", timeout=20000)
     except PlaywrightTimeoutError:
         pass
-    page.wait_for_function(
-        """() => {
-            const trs = document.querySelectorAll('table tbody tr');
-            if (trs && trs.length > 0) return true;
-            const t = document.body ? document.body.innerText : '';
-            if (t.includes('Nenhum') && t.includes('registro')) return true;
-            if (t.includes('No records')) return true;
-            return false;
-        }""",
-        timeout=25000,
-    )
+
+    # Detecta redirecionamento para login imediatamente
+    url = (page.url or "").lower()
+    if "/login" in url or "sign_in" in url:
+        raise RuntimeError(
+            "Sessão expirada durante a extração. Use o botão 'Login Painel' para autenticar novamente."
+        )
+
+    try:
+        page.wait_for_function(
+            """() => {
+                const trs = document.querySelectorAll('table tbody tr');
+                if (trs && trs.length > 0) return true;
+                const t = document.body ? document.body.innerText : '';
+                if (t.includes('Nenhum') && t.includes('registro')) return true;
+                if (t.includes('No records')) return true;
+                if (t.includes('Login') || t.includes('Senha') || t.includes('sign_in')) return true;
+                return false;
+            }""",
+            timeout=40000,
+        )
+    except PlaywrightTimeoutError:
+        pass  # Continua mesmo sem confirmação — evita travar em páginas lentas
+
+    # Checa novamente após o wait
+    url = (page.url or "").lower()
+    if "/login" in url or "sign_in" in url:
+        raise RuntimeError(
+            "Sessão expirada durante a extração. Use o botão 'Login Painel' para autenticar novamente."
+        )
 
 
 def parse_listagem_texto(raw: str) -> Tuple[str, Dict[str, str], bool]:
