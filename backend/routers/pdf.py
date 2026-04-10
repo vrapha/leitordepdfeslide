@@ -68,6 +68,21 @@ def _run_extraction_thread(job_id: str, pdf_path: str, target: int):
         job.error = str(e)
 
 
+@router.get("/status/{job_id}")
+async def get_job_status(job_id: str):
+    """Polling endpoint: retorna status, logs acumulados e resultado."""
+    job = get_job(job_id)
+    if not job:
+        return {"status": "not_found", "logs": [], "error": "Job não encontrado"}
+    codes = job.result.get("codes", []) if job.result else []
+    return {
+        "status": job.status,
+        "logs": job.logs,
+        "error": job.error,
+        "result": {"codes": codes} if codes else None,
+    }
+
+
 @router.get("/result/{job_id}")
 async def get_result(job_id: str):
     """Retorna os códigos extraídos."""

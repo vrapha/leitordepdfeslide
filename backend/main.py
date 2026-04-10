@@ -77,6 +77,23 @@ def download_pptx(job_id: str):
     )
 
 
+@app.get("/api/pdf/status/{job_id}")
+def pdf_job_status(job_id: str):
+    """
+    Polling de status do job PDF — sem API key (job_id UUID é auth suficiente).
+    """
+    job = get_job(job_id)
+    if not job:
+        return {"status": "not_found", "logs": [], "error": "Job não encontrado"}
+    codes = job.result.get("codes", []) if job.result else []
+    return {
+        "status": job.status,
+        "logs": job.logs,
+        "error": job.error,
+        "result": {"codes": codes} if codes else None,
+    }
+
+
 @app.get("/health")
 def health():
     """Diagnóstico mínimo — apenas confirma se a chave está configurada."""
