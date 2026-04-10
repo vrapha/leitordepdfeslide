@@ -6,7 +6,10 @@ import os
 import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
+from fastapi.responses import FileResponse
 from routers import slides, pdf, auth
+from services.job_manager import get_job
 
 # Produção = API_SECRET_KEY está definida no Railway
 _is_production = bool(os.environ.get("API_SECRET_KEY", ""))
@@ -52,6 +55,26 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 @app.get("/")
 def root():
     return {"status": "ok"}
+
+
+@app.get("/api/slides/download/{job_id}")
+def download_pptx(job_id: str):
+    """
+    Download do PPTX processado — sem API key (job_id UUID é auth suficiente).
+    Rota pública para permitir download direto sem passar pelo proxy do Lovable.
+    """
+    job = get_job(job_id)
+    if not job or not job.result:
+        return {"error": "Job não encontrado"}
+    output_file = job.result.get("output_file")
+    if not output_file or not Path(output_file).exists():
+        return {"error": "Arquivo não encontrado"}
+    return FileResponse(
+        path=output_file,
+        filename=Path(output_file).name,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f"attachment; filename=\"{Path(output_file).name}\""},
+    )
 
 
 @app.get("/health")
