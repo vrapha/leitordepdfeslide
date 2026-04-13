@@ -166,9 +166,14 @@ def parse_questoes_from_docx(
             "Verifique se o arquivo contém 'PARTE 2' ou 'Questão 1'."
         )
 
-    # Detecta se o arquivo usa headers explícitos (formato padrão)
+    # Detecta se o arquivo usa headers explícitos (formato padrão).
+    # Headers reais SEMPRE contêm '|' (Questão N | BANCA | Banco: QXX).
+    # "Questão N" sem '|' é referência do banco — ignorada.
     body = [t for t in paragraphs[parte2_idx + 1:] if t]
-    has_headers = any(_parse_questao_header(t) is not None for t in body[:30])
+    has_headers = any(
+        _parse_questao_header(t) is not None and '|' in t
+        for t in body[:30]
+    )
 
     logger("Detectando questões automaticamente...")
 
@@ -218,9 +223,13 @@ def _parse_com_headers(body: List[str], logger: Callable) -> List[DocxQuestion]:
     for text in body:
         parsed = _parse_questao_header(text)
         if parsed is not None:
+            # ── Headers reais SEMPRE têm '|'. Sem '|' = referência do banco. ──
+            # Ex: "Questão 83" numa célula adjacente da tabela — ignorar sempre.
+            if '|' not in text:
+                continue
             flush()
             current_numero, current_is_reserva = parsed
-            in_enunciado = "|" in text
+            in_enunciado = True   # header tem | → banca na mesma linha → próximo é enunciado
             continue
 
         if current_numero is None:
@@ -236,7 +245,25 @@ def _parse_com_headers(body: List[str], logger: Callable) -> List[DocxQuestion]:
 
         letra, alt_text = _parse_alternative(text)
         if letra:
-            in_enunciado = False
+            # ── FIX 2: alternativas "órfãs" antes do enunciado ───────────────
+            # Em layouts de duas colunas, D e E da questão anterior aparecem
+            # numa célula ao lado do header atual, ANTES do enunciado real.
+            # Regra: só desliga in_enunciado (e sinaliza fim do enunciado) ao
+            # encontrar a alternativa "A" — que é sempre a primeira da série
+            # real. Letras B-E antes de "A" são tratadas como órfãs: adicionadas
+            # mas sem desligar in_enunciado.
+            if letra == 'A' and current_enunciado_parts:
+                # Alternativa A real encontrada após enunciado coletado.
+                # Limpa alternativas órfãs (D, E, etc. coletadas antes do enunciado).
+                current_alternativas = {}
+                in_enunciado = False
+            elif letra != 'A':
+                # Pode ser órfã ou pode ser alternativa real (após a A já
+                # processada). Só desliga in_enunciado se já coletamos enunciado
+                # E já temos a alternativa A (ou seja, estamos na série real).
+                if current_enunciado_parts and 'A' in current_alternativas:
+                    in_enunciado = False
+                # caso contrário, mantém in_enunciado para continuar coletando
             if alt_text:
                 current_alternativas[letra] = alt_text
             continue
@@ -245,6 +272,12 @@ def _parse_com_headers(body: List[str], logger: Callable) -> List[DocxQuestion]:
             if text in ("[Texto não disponível]", "[Esta questão contém imagem/tabela"):
                 current_enunciado_parts.append("questão com imagem sem texto disponível")
             else:
+                current_enunciado_parts.append(text)
+        elif not current_enunciado_parts:
+            # Texto chegou antes de in_enunciado ser True (ex: banca em coluna
+            # adjacente lida fora de ordem). Religa a coleta de enunciado.
+            if not re.match(r"^quest[aã]o\s+\d+", text, re.I):  # não é header
+                in_enunciado = True
                 current_enunciado_parts.append(text)
 
     flush()
