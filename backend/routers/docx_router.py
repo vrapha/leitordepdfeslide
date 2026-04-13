@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 
-from services.job_manager import create_job, get_job, make_logger
+from services.job_manager import create_job, get_job, make_logger, cancel_job
 from services.docx_service import run_docx_extraction
 from security import require_api_key
 
@@ -56,13 +56,26 @@ def _run_extraction_thread(job_id: str, docx_path: str):
         result = run_docx_extraction(
             docx_path=docx_path,
             logger=logger,
+            job_id=job_id,
         )
-        job.result = result  # já é dict com codes, principais, reservas
-        job.status = "done"
+        if job.cancelled:
+            job.result = result  # salva o parcial
+        else:
+            job.result = result
+            job.status = "done"
     except Exception as e:
         logger(f"Erro: {e}", "ERROR")
         job.status = "error"
         job.error = str(e)
+
+
+@router.post("/cancel/{job_id}")
+async def cancel_docx(job_id: str):
+    """Cancela uma extração em andamento. Salva resultado parcial."""
+    ok = cancel_job(job_id)
+    if not ok:
+        return {"error": "Job não encontrado"}
+    return {"job_id": job_id, "status": "cancelled"}
 
 
 @router.get("/result/{job_id}")
@@ -90,9 +103,13 @@ async def download_csv(job_id: str):
     codes = job.result.get("codes", [])
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["codigo"])
-    for code in codes:
-        writer.writerow([code])
+    writer.writerow(["questao", "codigo"])
+    for entry in codes:
+        if isinstance(entry, dict):
+            writer.writerow([entry.get("label", ""), entry.get("code", "")])
+        else:
+            # fallback para formato antigo (string pura)
+            writer.writerow(["", entry])
 
     output.seek(0)
     return StreamingResponse(

@@ -61,7 +61,11 @@ def _run_chatgpt_login(job_id: str):
 
 @router.get("/site/status")
 def site_status():
-    return {"has_session": SITE_AUTH.exists()}
+    import os
+    return {
+        "has_session": SITE_AUTH.exists(),
+        "auto_login_configured": bool(os.environ.get("MANAGER_EMAIL") and os.environ.get("MANAGER_PASSWORD"))
+    }
 
 
 @router.post("/site/login")
@@ -73,7 +77,7 @@ def site_login(background_tasks: BackgroundTasks):
 
 
 def _run_site_login(job_id: str):
-    from playwright.sync_api import sync_playwright
+    import os
     job = get_job(job_id)
     if not job:
         return
@@ -81,51 +85,73 @@ def _run_site_login(job_id: str):
     job.status = "running"
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            context = browser.new_context()
-            page = context.new_page()
-            page.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-            )
+    manager_email = os.environ.get("MANAGER_EMAIL")
+    manager_password = os.environ.get("MANAGER_PASSWORD")
 
-            logger("Abrindo painel web...")
-            page.goto(
-                "https://manager.eumedicoresidente.com.br/admin/resources/Question",
-                wait_until="domcontentloaded",
-                timeout=60000,
-            )
-
-            url = page.url.lower()
-            if "/login" not in url:
-                context.storage_state(path=str(SITE_AUTH))
-                logger("Sessão já válida! Salva com sucesso.")
+    if manager_email and manager_password:
+        # Automatic login via credentials — safe for headless/server environments
+        try:
+            from services.pdf_service import auto_relogin
+            logger("Credenciais de ambiente detectadas. Executando login automático...")
+            success = auto_relogin(logger)
+            if success:
+                logger("Login automático concluído. Sessão salva.")
                 job.result = {"success": True}
                 job.status = "done"
-                browser.close()
-                return
+            else:
+                raise RuntimeError("auto_relogin() retornou False. Verifique as credenciais ou o estado do site.")
+        except Exception as e:
+            logger(f"Erro no login automático: {e}", "ERROR")
+            job.status = "error"
+            job.error = str(e)
+    else:
+        # Fallback: manual login via visible browser (requires a display)
+        from playwright.sync_api import sync_playwright
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=False)
+                context = browser.new_context()
+                page = context.new_page()
+                page.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                )
 
-            logger("Faça login no painel manualmente. Aguardando...")
-            import time
-            for _ in range(600):
-                time.sleep(1)
-                url = (page.url or "").lower()
-                on_admin = "/admin/resources" in url or url.endswith("/admin")
-                if on_admin:
+                logger("Abrindo painel web...")
+                page.goto(
+                    "https://manager.eumedicoresidente.com.br/admin/resources/Question",
+                    wait_until="domcontentloaded",
+                    timeout=60000,
+                )
+
+                url = page.url.lower()
+                if "/login" not in url:
                     context.storage_state(path=str(SITE_AUTH))
-                    logger("Login detectado! Sessão salva.")
+                    logger("Sessão já válida! Salva com sucesso.")
                     job.result = {"success": True}
                     job.status = "done"
-                    break
-            else:
-                raise TimeoutError("Timeout aguardando login no painel.")
+                    browser.close()
+                    return
 
-            browser.close()
-    except Exception as e:
-        logger(f"Erro no login: {e}", "ERROR")
-        job.status = "error"
-        job.error = str(e)
+                logger("Faça login no painel manualmente. Aguardando...")
+                import time
+                for _ in range(600):
+                    time.sleep(1)
+                    url = (page.url or "").lower()
+                    on_admin = "/admin/resources" in url or url.endswith("/admin")
+                    if on_admin:
+                        context.storage_state(path=str(SITE_AUTH))
+                        logger("Login detectado! Sessão salva.")
+                        job.result = {"success": True}
+                        job.status = "done"
+                        break
+                else:
+                    raise TimeoutError("Timeout aguardando login no painel.")
+
+                browser.close()
+        except Exception as e:
+            logger(f"Erro no login: {e}", "ERROR")
+            job.status = "error"
+            job.error = str(e)
 
 
 @router.post("/chatgpt/upload")

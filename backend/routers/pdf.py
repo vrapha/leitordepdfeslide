@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 
-from services.job_manager import create_job, get_job, make_logger
+from services.job_manager import create_job, get_job, make_logger, cancel_job
 from services.pdf_service import run_pdf_extraction
 from security import require_api_key, check_websocket_key, validate_pdf
 
@@ -59,13 +59,24 @@ def _run_extraction_thread(job_id: str, pdf_path: str, target: int):
             logger=logger,
             headless=True,
             target_encontradas=target,
+            job_id=job_id,
         )
         job.result = {"codes": codes}
-        job.status = "done"
+        if not job.cancelled:
+            job.status = "done"
     except Exception as e:
         logger(f"Erro: {e}", "ERROR")
         job.status = "error"
         job.error = str(e)
+
+
+@router.post("/cancel/{job_id}")
+async def cancel_pdf(job_id: str):
+    """Cancela uma extração em andamento. Salva resultado parcial."""
+    ok = cancel_job(job_id)
+    if not ok:
+        return {"error": "Job não encontrado"}
+    return {"job_id": job_id, "status": "cancelled"}
 
 
 @router.get("/status/{job_id}")

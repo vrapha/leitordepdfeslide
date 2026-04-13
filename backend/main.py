@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi.responses import FileResponse
 from routers import slides, pdf, auth
 from routers import docx_router
-from services.job_manager import get_job
+from services.job_manager import get_job, cancel_job
 
 # Produção = API_SECRET_KEY está definida no Railway
 _is_production = bool(os.environ.get("API_SECRET_KEY", ""))
@@ -113,6 +113,24 @@ def pdf_job_status(job_id: str):
         "error": job.error,
         "result": {"codes": codes} if codes else None,
     }
+
+
+@app.post("/api/docx/cancel/{job_id}")
+def docx_cancel(job_id: str):
+    """Cancela extração DOCX em andamento — sem API key (job_id é auth suficiente)."""
+    ok = cancel_job(job_id)
+    if not ok:
+        return {"error": "Job não encontrado"}
+    return {"job_id": job_id, "status": "cancelled"}
+
+
+@app.post("/api/pdf/cancel/{job_id}")
+def pdf_cancel(job_id: str):
+    """Cancela extração PDF em andamento — sem API key (job_id é auth suficiente)."""
+    ok = cancel_job(job_id)
+    if not ok:
+        return {"error": "Job não encontrado"}
+    return {"job_id": job_id, "status": "cancelled"}
 
 
 @app.get("/health")

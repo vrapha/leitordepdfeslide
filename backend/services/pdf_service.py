@@ -20,6 +20,43 @@ from rapidfuzz import fuzz
 from unidecode import unidecode
 
 QUESTIONS_URL = "https://manager.eumedicoresidente.com.br/admin/resources/Question"
+
+
+class SessionExpiredError(Exception):
+    """Sessão do Manager expirou — aguardar novo login."""
+    pass
+
+
+def wait_for_new_session(logger: Callable = print, timeout_minutes: int = 10) -> bool:
+    """
+    Aguarda até que um novo storage_state.json seja enviado ao Railway.
+    Monitora o mtime do arquivo. Retorna True se renovada, False se timeout.
+    """
+    import time as _time
+    sp = Path(STORAGE_STATE)
+    if not sp.exists():
+        return False
+
+    original_mtime = sp.stat().st_mtime
+    deadline = _time.time() + timeout_minutes * 60
+    logger(f"⚠️  SESSÃO EXPIRADA — Faça login pelo script login_manager.py")
+    logger(f"   Aguardando nova sessão por até {timeout_minutes} minutos...")
+
+    while _time.time() < deadline:
+        _time.sleep(10)
+        try:
+            new_mtime = sp.stat().st_mtime
+            if new_mtime > original_mtime:
+                logger("✓ Nova sessão detectada! Retomando extração...")
+                _time.sleep(2)
+                return True
+        except Exception:
+            pass
+        remaining = int((deadline - _time.time()) / 60)
+        logger(f"   Aguardando login... ({remaining} min restantes)")
+
+    logger("✗ Timeout aguardando nova sessão. Encerrando com resultados parciais.")
+    return False
 SESSIONS_DIR = Path(__file__).resolve().parent.parent / "sessions"
 STORAGE_STATE = str(SESSIONS_DIR / "storage_state.json")
 
@@ -404,9 +441,7 @@ def wait_results(page) -> None:
     # Detecta redirecionamento para login imediatamente
     url = (page.url or "").lower()
     if "/login" in url or "sign_in" in url:
-        raise RuntimeError(
-            "Sessão expirada durante a extração. Use o botão 'Login Painel' para autenticar novamente."
-        )
+        raise SessionExpiredError()
 
     try:
         page.wait_for_function(
@@ -427,9 +462,7 @@ def wait_results(page) -> None:
     # Checa novamente após o wait
     url = (page.url or "").lower()
     if "/login" in url or "sign_in" in url:
-        raise RuntimeError(
-            "Sessão expirada durante a extração. Use o botão 'Login Painel' para autenticar novamente."
-        )
+        raise SessionExpiredError()
 
 
 def parse_listagem_texto(raw: str) -> Tuple[str, Dict[str, str], bool]:
@@ -518,6 +551,7 @@ def find_code_for_question(
     page,
     questao: QuestionBlock,
     logger: Callable = print,
+    job_id: Optional[str] = None,
 ) -> Optional[MatchResult]:
     # Passa alternativas para o builder — usado como fallback de última instância
     queries = build_queries_from_enunciado(questao.enunciado, questao.alternativas)
@@ -529,7 +563,16 @@ def find_code_for_question(
     max_score_seen = 0
     logger(f"  [{questao.numero}] {len(queries)} queries geradas para busca.")
 
+    def _cancelled() -> bool:
+        if not job_id:
+            return False
+        from services.job_manager import get_job as _gj
+        j = _gj(job_id)
+        return j is not None and j.cancelled
+
     for q in queries[:MAX_QUERIES_PER_QUESTION]:
+        if _cancelled():
+            return None
         query_count += 1
         limit_pages = MAX_PAGES_GENERIC if len(q.split()) <= 2 else MAX_PAGES_SPECIFIC
         per_page = 50 if len(q.split()) <= 2 else 25
@@ -633,11 +676,75 @@ def _ensure_logged_in_and_save_state(page, context, storage_state_path: str):
         context.storage_state(path=str(sp))
 
 
+def auto_relogin(logger: Callable = print) -> bool:
+    """
+    Faz login automático no Manager usando MANAGER_EMAIL e MANAGER_PASSWORD
+    do ambiente (variáveis do Railway). Salva o novo storage_state.json.
+    Retorna True se bem-sucedido, False caso contrário.
+    """
+    email = os.environ.get("MANAGER_EMAIL", "").strip()
+    password = os.environ.get("MANAGER_PASSWORD", "").strip()
+    if not email or not password:
+        logger("✗ Variáveis MANAGER_EMAIL / MANAGER_PASSWORD não configuradas no Railway.")
+        logger("  Configure-as em Settings → Variables para habilitar o re-login automático.")
+        return False
+
+    logger("🔄 Tentando re-login automático no Manager...")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, slow_mo=50)
+            context = browser.new_context()
+            page = context.new_page()
+            page.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            )
+
+            # Acessa a página de questões — se não estiver logado, redireciona para login
+            page.goto(QUESTIONS_URL, wait_until="domcontentloaded", timeout=60000)
+            url = (page.url or "").lower()
+
+            if "/login" not in url:
+                # Já logado (sessão de outro contexto) — improvável, mas salva mesmo assim
+                context.storage_state(path=STORAGE_STATE)
+                browser.close()
+                logger("✓ Re-login automático: sessão já ativa.")
+                return True
+
+            # Preenche o formulário de login
+            page.fill('input[type="email"], input[name="email"], input[name="username"]', email)
+            page.fill('input[type="password"]', password)
+            page.click('button[type="submit"], input[type="submit"]')
+
+            # Aguarda sair da página de login
+            try:
+                page.wait_for_function(
+                    '() => !window.location.href.includes("/login")',
+                    timeout=30000,
+                )
+            except PlaywrightTimeoutError:
+                logger("✗ Re-login automático falhou: timeout aguardando redirecionamento.")
+                browser.close()
+                return False
+
+            # Salva novo estado de sessão
+            sp = Path(STORAGE_STATE)
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            context.storage_state(path=STORAGE_STATE)
+            browser.close()
+            logger("✓ Re-login automático concluído com sucesso.")
+            return True
+
+    except Exception as exc:
+        logger(f"✗ Re-login automático falhou: {exc}")
+        return False
+
+
 def run_pdf_extraction(
     pdf_path: str,
     logger: Callable = print,
     headless: bool = False,
     target_encontradas: int = 30,
+    job_id: Optional[str] = None,
 ) -> List[str]:
     """
     Função principal: extrai códigos do PDF e retorna lista de strings.
@@ -652,38 +759,90 @@ def run_pdf_extraction(
     ad_questions, outras_questions = parse_questoes_from_pdf(pdf_path, logger)
     logger(f"ACESSO DIRETO: {len(ad_questions)} | ESP: {len(outras_questions)}")
 
+    # Se não há sessão salva ou ela expirou, tenta login automático antes de falhar
     if not Path(STORAGE_STATE).exists():
-        raise RuntimeError(
-            "Sessão do painel não encontrada. "
-            "Use o botão 'Login Painel' para autenticar primeiro."
-        )
+        logger("⚠️  Sessão não encontrada — tentando login automático...")
+        if not auto_relogin(logger):
+            raise RuntimeError(
+                "Sessão do painel não encontrada e login automático falhou. "
+                "Configure MANAGER_EMAIL e MANAGER_PASSWORD no Railway."
+            )
 
     ad_nao_encontradas: List[int] = []
     results: List[str] = []
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless, slow_mo=30)
-        context = browser.new_context(storage_state=STORAGE_STATE)
-        page = context.new_page()
-        page.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-        )
+    all_questions = ad_questions + outras_questions
+    found_count = 0
 
-        _ensure_logged_in_and_save_state(page, context, STORAGE_STATE)
+    with sync_playwright() as p_inst:
 
-        all_questions = ad_questions + outras_questions
-        found_count = 0
+        def _init_browser_pdf():
+            b = p_inst.chromium.launch(headless=headless, slow_mo=30)
+            ss = STORAGE_STATE if Path(STORAGE_STATE).exists() else None
+            c = b.new_context(storage_state=ss) if ss else b.new_context()
+            pg = c.new_page()
+            pg.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            )
+            try:
+                _ensure_logged_in_and_save_state(pg, c, STORAGE_STATE)
+            except RuntimeError:
+                logger("⚠️  Sessão expirada ao iniciar — tentando login automático...")
+                pg.close()
+                b.close()
+                if not auto_relogin(logger):
+                    raise RuntimeError(
+                        "Sessão expirada e login automático falhou. "
+                        "Configure MANAGER_EMAIL e MANAGER_PASSWORD no Railway."
+                    )
+                b = p_inst.chromium.launch(headless=headless, slow_mo=30)
+                c = b.new_context(storage_state=STORAGE_STATE)
+                pg = c.new_page()
+                pg.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                )
+                _ensure_logged_in_and_save_state(pg, c, STORAGE_STATE)
+            return b, c, pg
 
-        for idx, questao in enumerate(all_questions, 1):
+        browser, context, page = _init_browser_pdf()
+
+        def _is_cancelled_pdf() -> bool:
+            if not job_id:
+                return False
+            from services.job_manager import get_job as _get_job
+            j = _get_job(job_id)
+            return j is not None and j.cancelled
+
+        idx = 0
+        while idx < len(all_questions):
+            if _is_cancelled_pdf():
+                logger("🛑 Extração cancelada pelo usuário.")
+                break
+
             if found_count >= target_encontradas:
                 break
 
-            numero = questao.numero or idx
+            questao = all_questions[idx]
+            numero = questao.numero or (idx + 1)
             tipo = "AD" if questao.tipo == "ACESSO_DIRETO" else "ESP"
             preview = (questao.enunciado[:100] + "...") if len(questao.enunciado) > 100 else questao.enunciado
-            logger(f"[{idx}/{len(all_questions)}] {tipo} Q{numero}: {preview}")
+            logger(f"[{idx+1}/{len(all_questions)}] {tipo} Q{numero}: {preview}")
 
-            match = find_code_for_question(page, questao, logger)
+            try:
+                match = find_code_for_question(page, questao, logger, job_id=job_id)
+            except SessionExpiredError:
+                logger("⚠️  Sessão expirada — tentando renovar automaticamente...")
+                renewed = auto_relogin(logger)
+                if not renewed:
+                    logger("✗ Não foi possível renovar a sessão. Encerrando com resultados parciais.")
+                    break
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                browser, context, page = _init_browser_pdf()
+                logger(f"✓ Sessão renovada. Retomando a partir de Q{numero}...")
+                continue  # retry mesma questão sem avançar idx
 
             if match:
                 categoria = "ACESSO DIRETO" if questao.tipo == "ACESSO_DIRETO" else "ESP"
@@ -695,6 +854,8 @@ def run_pdf_extraction(
                 logger(f"  NÃO ENCONTRADO [{found_count}/{target_encontradas}]")
                 if questao.tipo == "ACESSO_DIRETO":
                     ad_nao_encontradas.append(numero)
+
+            idx += 1
 
         browser.close()
 

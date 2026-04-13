@@ -15,10 +15,11 @@ JOB_TTL_HOURS = 24
 @dataclass
 class Job:
     id: str
-    status: str = "pending"   # pending | running | done | error
+    status: str = "pending"   # pending | running | done | error | cancelled
     logs: list[str] = field(default_factory=list)
     result: Any = None
     error: str | None = None
+    cancelled: bool = False
     log_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = field(
@@ -58,6 +59,16 @@ def make_logger(job: Job):
             pass
         print(entry)
     return log
+
+
+def cancel_job(job_id: str) -> bool:
+    """Marca o job para cancelamento. O loop de extração verifica e para na próxima iteração."""
+    job = get_job(job_id)
+    if not job:
+        return False
+    job.cancelled = True
+    job.status = "cancelled"
+    return True
 
 
 def _cleanup_expired() -> None:
