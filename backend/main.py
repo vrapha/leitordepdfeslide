@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 from fastapi.responses import FileResponse
 from routers import slides, pdf, auth
+from routers import docx_router
 from services.job_manager import get_job
 
 # Produção = API_SECRET_KEY está definida no Railway
@@ -49,6 +50,7 @@ app.add_middleware(
 
 app.include_router(slides.router, prefix="/api/slides", tags=["slides"])
 app.include_router(pdf.router, prefix="/api/pdf", tags=["pdf"])
+app.include_router(docx_router.router, prefix="/api/docx", tags=["docx"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 
 
@@ -75,6 +77,21 @@ def download_pptx(job_id: str):
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={"Content-Disposition": f"attachment; filename=\"{Path(output_file).name}\""},
     )
+
+
+@app.get("/api/docx/status/{job_id}")
+def docx_job_status(job_id: str):
+    """Polling de status do job DOCX — sem API key."""
+    job = get_job(job_id)
+    if not job:
+        return {"status": "not_found", "logs": [], "error": "Job não encontrado"}
+    codes = job.result.get("codes", []) if job.result else []
+    return {
+        "status": job.status,
+        "logs": job.logs,
+        "error": job.error,
+        "result": {"codes": codes} if codes else None,
+    }
 
 
 @app.get("/api/pdf/status/{job_id}")
