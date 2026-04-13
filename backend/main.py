@@ -85,12 +85,16 @@ def docx_job_status(job_id: str):
     job = get_job(job_id)
     if not job:
         return {"status": "not_found", "logs": [], "error": "Job não encontrado"}
-    codes = job.result.get("codes", []) if job.result else []
+    result = job.result or {}
     return {
         "status": job.status,
         "logs": job.logs,
         "error": job.error,
-        "result": {"codes": codes} if codes else None,
+        "result": {
+            "codes": result.get("codes", []),
+            "principais": result.get("principais", []),
+            "reservas": result.get("reservas", []),
+        } if result else None,
     }
 
 

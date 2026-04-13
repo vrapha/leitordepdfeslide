@@ -70,10 +70,13 @@ async def get_result(job_id: str):
     job = get_job(job_id)
     if not job:
         return {"error": "Job não encontrado"}
+    result = job.result or {}
     return {
         "job_id": job_id,
         "status": job.status,
-        "codes": job.result.get("codes", []) if job.result else [],
+        "codes": result.get("codes", []),
+        "principais": result.get("principais", []),
+        "reservas": result.get("reservas", []),
         "error": job.error,
     }
 
