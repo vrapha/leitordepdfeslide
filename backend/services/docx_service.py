@@ -1,6 +1,7 @@
 """
 DOCX Service — Extração de códigos de questões de arquivos Word (.docx).
 Mesmo objetivo do PDF Service: buscar cada questão no Manager e retornar códigos.
+
 Estrutura esperada do Word:
   PARTE 1 — BLUEPRINT (ignorado)
   PARTE 2 — SIMULADO
@@ -10,11 +11,15 @@ Estrutura esperada do Word:
     A. alternativa
     B. alternativa
     ...
+
+Premissas do Word (diferente do PDF):
+  - TODAS as questões estão garantidamente no Manager → busca agressiva, sem desistência
+  - Quantidade de questões é variável → detectada automaticamente no arquivo
+  - Resultado retornado em ordem (Q1, Q2, Q3...) com código ou "NÃO ENCONTRADO"
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -23,13 +28,29 @@ from docx import Document as DocxDocument
 # Reutiliza toda a lógica de busca do PDF service
 from services.pdf_service import (
     QuestionBlock,
-    find_code_for_question,
     STORAGE_STATE,
-    QUESTIONS_URL,
     _ensure_logged_in_and_save_state,
+    build_queries_from_enunciado,
+    goto_filter_page,
+    wait_results,
+    parse_listagem_texto,
+    validate_question_match,
+    SiteQuestion,
+    MatchResult,
+    count_pdf_alternatives,
+    MAX_QUERY_CHARS,
 )
+from rapidfuzz import fuzz
+from unidecode import unidecode
 
-import re as _re
+# ─── Parâmetros agressivos para Word ────────────────────────────────────────
+# Como TODAS as questões estão no Manager, nunca desistimos cedo
+DOCX_MAX_QUERIES   = 120   # mais tentativas que o PDF (era 80)
+DOCX_SMART_STOP    = 9999  # desativa smart-stop — nunca abandona
+DOCX_MIN_SCORE     = 0     # sem score mínimo para continuar tentando
+DOCX_MAX_PAGES     = 8     # páginas por query
+DOCX_SPECIALTY_IDX = 3
+# ────────────────────────────────────────────────────────────────────────────
 
 
 # ─────────── Parsing do Word ───────────
@@ -49,13 +70,8 @@ def _is_banca_line(text: str) -> bool:
     return bool(re.search(r"banco\s+original", text, re.I))
 
 
-def _is_alternative(text: str) -> Optional[str]:
-    """Retorna a letra se for linha de alternativa (A. texto), senão None."""
-    m = re.match(r"^([A-E])[\.\)]\s+(.+)", text.strip())
-    return m.group(1) if m else None
-
-
-def _extract_alternative_letter_text(text: str):
+def _parse_alternative(text: str):
+    """Retorna (letra, texto) se for alternativa, senão (None, None)."""
     m = re.match(r"^([A-E])[\.\)]\s+(.+)", text.strip())
     if m:
         return m.group(1), _compact(m.group(2))
@@ -67,13 +83,13 @@ def parse_questoes_from_docx(
     logger: Callable = print,
 ) -> List[QuestionBlock]:
     """
-    Lê um .docx e retorna lista de QuestionBlock prontos para busca no Manager.
-    Ignora a PARTE 1 (blueprint/tabelas) e processa apenas a PARTE 2 (simulado).
+    Lê um .docx e retorna lista de QuestionBlock em ordem.
+    Detecta automaticamente quantas questões existem no arquivo.
     """
     doc = DocxDocument(docx_path)
     paragraphs = [_compact(p.text) for p in doc.paragraphs]
 
-    # Localiza início da PARTE 2
+    # Localiza início da PARTE 2 (ou fallback: primeira "Questão 1")
     parte2_idx = None
     for i, text in enumerate(paragraphs):
         if re.search(r"PARTE\s+2", text, re.I):
@@ -81,7 +97,6 @@ def parse_questoes_from_docx(
             break
 
     if parte2_idx is None:
-        # Tenta encontrar o primeiro "Questão 1" como fallback
         for i, text in enumerate(paragraphs):
             if _is_questao_header(text) == 1:
                 parte2_idx = i
@@ -89,34 +104,33 @@ def parse_questoes_from_docx(
 
     if parte2_idx is None:
         raise RuntimeError(
-            "Não foi possível localizar a seção de questões no documento. "
+            "Não foi possível localizar a seção de questões. "
             "Verifique se o arquivo contém 'PARTE 2' ou 'Questão 1'."
         )
 
-    logger(f"Seção de questões localizada no parágrafo {parte2_idx}.")
+    logger(f"Seção de questões localizada. Detectando questões automaticamente...")
 
-    # Parsing das questões
+    # Parsing
     questions: List[QuestionBlock] = []
     current_numero: Optional[int] = None
     current_enunciado_parts: List[str] = []
     current_alternativas: Dict[str, str] = {}
-    in_enunciado = False  # True após a linha de banca, antes das alternativas
+    in_enunciado = False
 
-    def flush_question():
+    def flush():
         nonlocal current_numero, current_enunciado_parts, current_alternativas, in_enunciado
         if current_numero is None:
             return
         enunciado = _compact(" ".join(current_enunciado_parts))
         alts = dict(current_alternativas)
-        if len(enunciado.split()) >= 4:
-            q = QuestionBlock(
+        if len(enunciado.split()) >= 3:
+            questions.append(QuestionBlock(
                 numero=current_numero,
-                tipo="ACESSO_DIRETO",  # Word não distingue tipo — trata como AD
+                tipo="ACESSO_DIRETO",
                 enunciado=enunciado,
                 alternativas=alts,
                 texto_completo=enunciado,
-            )
-            questions.append(q)
+            ))
         current_numero = None
         current_enunciado_parts = []
         current_alternativas = {}
@@ -128,7 +142,7 @@ def parse_questoes_from_docx(
 
         num = _is_questao_header(text)
         if num is not None:
-            flush_question()
+            flush()
             current_numero = num
             in_enunciado = False
             continue
@@ -137,13 +151,12 @@ def parse_questoes_from_docx(
             continue
 
         if _is_banca_line(text):
-            in_enunciado = True  # Próximos parágrafos são enunciado
+            in_enunciado = True
             continue
 
-        letra = _is_alternative(text)
+        letra, alt_text = _parse_alternative(text)
         if letra:
             in_enunciado = False
-            _, alt_text = _extract_alternative_letter_text(text)
             if alt_text:
                 current_alternativas[letra] = alt_text
             continue
@@ -151,10 +164,112 @@ def parse_questoes_from_docx(
         if in_enunciado:
             current_enunciado_parts.append(text)
 
-    flush_question()
+    flush()
 
-    logger(f"{len(questions)} questões extraídas do documento Word.")
+    logger(f"{len(questions)} questões detectadas no documento.")
     return questions
+
+
+# ─────────── Busca agressiva para Word ───────────
+
+def _find_code_docx(
+    page,
+    questao: QuestionBlock,
+    logger: Callable = print,
+) -> Optional[MatchResult]:
+    """
+    Versão agressiva de find_code_for_question para Word.
+    Nunca desiste — todas as questões estão garantidamente no Manager.
+    """
+    from urllib.parse import quote_plus
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    queries = build_queries_from_enunciado(questao.enunciado, questao.alternativas)
+    total_pdf = count_pdf_alternatives(questao.alternativas) or 4
+    seen_codes: set[str] = set()
+    best_media: Optional[tuple] = None
+    best_baixa: Optional[tuple] = None
+    query_count = 0
+    max_score_seen = 0
+
+    logger(f"  [{questao.numero}] {len(queries)} queries geradas.")
+
+    for q in queries[:DOCX_MAX_QUERIES]:
+        query_count += 1
+        per_page = 25
+
+        for pnum in range(1, DOCX_MAX_PAGES + 1):
+            goto_filter_page(page, q, pnum)
+            wait_results(page)
+
+            rows = page.evaluate(
+                f"""() => {{
+                    const out = [];
+                    for (const tr of document.querySelectorAll('table tbody tr')) {{
+                        const tds = tr.querySelectorAll('td');
+                        if (!tds || tds.length < {DOCX_SPECIALTY_IDX + 1}) continue;
+                        const code = (tds[1]?.innerText || '').trim();
+                        const desc = (tds[2]?.innerText || '').trim();
+                        const esp  = (tds[{DOCX_SPECIALTY_IDX}]?.innerText || '').trim();
+                        if (code && desc) out.push({{code, desc, esp}});
+                    }}
+                    return out;
+                }}"""
+            )
+
+            if not rows:
+                break
+
+            for r in rows[:per_page]:
+                code = (r.get("code") or "").strip()
+                if not code or code in seen_codes:
+                    continue
+                seen_codes.add(code)
+                raw_desc = (r.get("desc") or "").strip()
+                esp = (r.get("esp") or "").strip()
+                if not raw_desc:
+                    continue
+
+                enun, alts, is_ad = parse_listagem_texto(raw_desc)
+                if not enun:
+                    continue
+
+                sq = SiteQuestion(code, enun, alts, is_ad, esp)
+                match_ok, score, num_alt = validate_question_match(questao, sq)
+                max_score_seen = max(max_score_seen, score)
+
+                if not match_ok:
+                    continue
+
+                ratio = num_alt / total_pdf if total_pdf else 0
+                if score >= 90 and ratio >= 0.75:
+                    confianca = "ALTA"
+                elif score >= 80 and ratio >= 0.60:
+                    confianca = "MEDIA"
+                else:
+                    confianca = "BAIXA"
+
+                result = MatchResult(code, score, num_alt, confianca, is_ad, esp)
+                rank = score * 10 + num_alt
+
+                if confianca == "ALTA":
+                    return result
+                if confianca == "MEDIA":
+                    if best_media is None or rank > best_media[1]:
+                        best_media = (result, rank)
+                else:
+                    if best_baixa is None or rank > best_baixa[1]:
+                        best_baixa = (result, rank)
+
+            # Retorno antecipado se score muito bom
+            if best_media and best_media[0].score_enunciado >= 90:
+                return best_media[0]
+
+    # Retorna o melhor encontrado mesmo se confiança baixa
+    result = (best_media[0] if best_media else None) or (best_baixa[0] if best_baixa else None)
+    if not result:
+        logger(f"  [{questao.numero}] Não encontrado após {query_count} queries. Melhor score: {max_score_seen}%")
+    return result
 
 
 # ─────────── Extração principal ───────────
@@ -162,10 +277,10 @@ def parse_questoes_from_docx(
 def run_docx_extraction(
     docx_path: str,
     logger: Callable = print,
-    target_encontradas: int = 70,
 ) -> List[str]:
     """
-    Extrai códigos de um .docx e retorna lista de strings (igual ao PDF service).
+    Extrai códigos de TODAS as questões do .docx em ordem (Q1, Q2, Q3...).
+    Retorna lista com código ou marcador de não encontrado para cada questão.
     """
     from playwright.sync_api import sync_playwright
 
@@ -177,9 +292,12 @@ def run_docx_extraction(
     logger("=" * 50)
 
     questions = parse_questoes_from_docx(docx_path, logger)
+    total = len(questions)
 
     if not questions:
         raise RuntimeError("Nenhuma questão foi encontrada no documento.")
+
+    logger(f"Total de questões a processar: {total}")
 
     if not Path(STORAGE_STATE).exists():
         raise RuntimeError(
@@ -187,7 +305,9 @@ def run_docx_extraction(
             "Use o botão 'Login Painel' para autenticar primeiro."
         )
 
+    # Resultado em ordem: índice = número da questão - 1
     results: List[str] = []
+    found_count = 0
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, slow_mo=30)
@@ -199,27 +319,23 @@ def run_docx_extraction(
 
         _ensure_logged_in_and_save_state(page, context, STORAGE_STATE)
 
-        found_count = 0
-
         for idx, questao in enumerate(questions, 1):
-            if found_count >= target_encontradas:
-                break
-
             numero = questao.numero or idx
             preview = (questao.enunciado[:100] + "...") if len(questao.enunciado) > 100 else questao.enunciado
-            logger(f"[{idx}/{len(questions)}] Q{numero}: {preview}")
+            logger(f"[{idx}/{total}] Q{numero}: {preview}")
 
-            match = find_code_for_question(page, questao, logger)
+            match = _find_code_docx(page, questao, logger)
 
             if match:
-                codigo = f"{match.code} (Q{numero} WORD)"
+                codigo = f"{match.code}"
                 results.append(codigo)
                 found_count += 1
-                logger(f"  ENCONTRADO: {codigo} ({match.confianca}) [{found_count}/{target_encontradas}]")
+                logger(f"  ✓ ENCONTRADO: {codigo} (score={match.score_enunciado}%, {match.confianca}) [{found_count}/{total}]")
             else:
-                logger(f"  NÃO ENCONTRADO [{found_count}/{target_encontradas}]")
+                results.append(f"Q{numero}_NAO_ENCONTRADO")
+                logger(f"  ✗ NÃO ENCONTRADO [{found_count}/{total}]")
 
         browser.close()
 
-    logger(f"CONCLUÍDO: {len(results)} códigos extraídos.")
+    logger(f"CONCLUÍDO: {found_count}/{total} códigos encontrados.")
     return results

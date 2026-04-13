@@ -24,9 +24,8 @@ UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 async def extract_docx(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    target: int = Form(70),
 ):
-    """Inicia extração de códigos do .docx em background."""
+    """Inicia extração de códigos do .docx em background. Processa TODAS as questões."""
     content = await file.read()
     if len(content) == 0:
         return {"error": "Arquivo vazio."}
@@ -40,12 +39,12 @@ async def extract_docx(
     docx_path = UPLOADS_DIR / f"{job.id}_{safe_name}"
     docx_path.write_bytes(content)
 
-    background_tasks.add_task(_run_extraction_thread, job.id, str(docx_path), target)
+    background_tasks.add_task(_run_extraction_thread, job.id, str(docx_path))
 
     return {"job_id": job.id, "status": "running"}
 
 
-def _run_extraction_thread(job_id: str, docx_path: str, target: int):
+def _run_extraction_thread(job_id: str, docx_path: str):
     job = get_job(job_id)
     if not job:
         return
@@ -57,7 +56,6 @@ def _run_extraction_thread(job_id: str, docx_path: str, target: int):
         codes = run_docx_extraction(
             docx_path=docx_path,
             logger=logger,
-            target_encontradas=target,
         )
         job.result = {"codes": codes}
         job.status = "done"
