@@ -155,13 +155,19 @@ def parse_questoes_from_docx(
         if parsed is not None:
             flush()
             current_numero, current_is_reserva = parsed
-            in_enunciado = False
+            # Se o header já contém '|', a banca está na mesma linha → próximo parágrafo é enunciado
+            in_enunciado = "|" in text
             continue
 
         if current_numero is None:
             continue
 
         if _is_banca_line(text):
+            in_enunciado = True
+            continue
+
+        # Linha de banca sem "banco original" (ex: "PSU-MG 2025 | Banco: Q23")
+        if re.match(r"^[A-Z].*\d{4}.*\|", text) and not in_enunciado and not current_enunciado_parts:
             in_enunciado = True
             continue
 
@@ -173,7 +179,11 @@ def parse_questoes_from_docx(
             continue
 
         if in_enunciado:
-            current_enunciado_parts.append(text)
+            # Ignora placeholder de questão com imagem mas registra para não perder a questão
+            if text == "[Texto não disponível]" or text == "[Esta questão contém imagem/tabela":
+                current_enunciado_parts.append("questão com imagem sem texto disponível")
+            else:
+                current_enunciado_parts.append(text)
 
     flush()
 
