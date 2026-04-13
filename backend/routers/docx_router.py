@@ -53,11 +53,11 @@ def _run_extraction_thread(job_id: str, docx_path: str):
     job.status = "running"
 
     try:
-        codes = run_docx_extraction(
+        result = run_docx_extraction(
             docx_path=docx_path,
             logger=logger,
         )
-        job.result = {"codes": codes}
+        job.result = result  # já é dict com codes, principais, reservas
         job.status = "done"
     except Exception as e:
         logger(f"Erro: {e}", "ERROR")
