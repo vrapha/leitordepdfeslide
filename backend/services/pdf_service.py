@@ -711,9 +711,9 @@ def auto_relogin(logger: Callable = print) -> bool:
                 return True
 
             # Preenche o formulário de login
-            page.fill('input[type="email"], input[name="email"], input[name="username"]', email)
-            page.fill('input[type="password"]', password)
-            page.click('button[type="submit"], input[type="submit"]')
+            page.fill('input[name="email"]', email)
+            page.fill('input[name="password"]', password)
+            page.click('button.adminjs_Button, button[type="submit"], input[type="submit"]')
 
             # Aguarda sair da página de login
             try:
