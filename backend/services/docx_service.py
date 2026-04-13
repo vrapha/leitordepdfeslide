@@ -63,15 +63,15 @@ def _compact(s: str) -> str:
 def _parse_questao_header(text: str) -> Optional[Tuple[int, bool]]:
     """
     Retorna (numero, is_reserva) se for header de questão, senão None.
-    Aceita: 'Questão 1', 'Questão R1', 'Questão r1'
+    Aceita: 'Questão 1', 'Questão R1', 'Questão R10 | PSU-MG 2025 | ...'
     """
     t = text.strip()
-    # Reserva: Questão R1, Questão R2...
-    m = re.match(r"^Quest[aã]o\s+[Rr](\d+)\s*$", t, re.I)
+    # Reserva: Questão R1, Questão R2... (pode ter texto extra após o número)
+    m = re.match(r"^Quest[aã]o\s+[Rr](\d+)(\s*$|\s*[\|,])", t, re.I)
     if m:
         return int(m.group(1)), True
-    # Principal: Questão 1, Questão 2...
-    m = re.match(r"^Quest[aã]o\s+(\d+)\s*$", t, re.I)
+    # Principal: Questão 1, Questão 2... (pode ter texto extra após o número)
+    m = re.match(r"^Quest[aã]o\s+(\d+)(\s*$|\s*[\|,])", t, re.I)
     if m:
         return int(m.group(1)), False
     return None
