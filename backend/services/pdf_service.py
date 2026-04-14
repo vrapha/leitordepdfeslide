@@ -69,10 +69,10 @@ ALTERNATIVA_PARTIAL = 83
 MAX_PAGES_GENERIC = 14
 MAX_PAGES_SPECIFIC = 6
 MAX_QUERY_CHARS = 1400
-MAX_QUERIES_PER_QUESTION = 80   # era 50 — mais tentativas com as novas queries
+MAX_QUERIES_PER_QUESTION = 80
 MAX_SEEN_CODES_BEFORE_STOP = 30
-SMART_STOP_AFTER = 20           # era 12 — desistia cedo demais
-MIN_SCORE_TO_CONTINUE = 50      # era 60 — desistia com score razoável
+SMART_STOP_AFTER = 35           # aumentado: prefixo banca gera queries vazias inicialmente
+MIN_SCORE_TO_CONTINUE = 40      # mais leniente: prefixo banca reduz score artificialmente
 QUICK_STOP_AFTER_QUERIES = 10
 QUICK_STOP_MIN_SCORE = 88
 EARLY_STOP_IF_GOOD_MEDIA = True
@@ -301,6 +301,38 @@ def parse_questoes_from_pdf(pdf_path: str, logger: Callable = print) -> Tuple[Li
     return acesso_direto, outras
 
 
+# ─────────── Limpeza de prefixo de banca ───────────
+
+# Padrão: "SIGLA[-SP/BR] [- (Nome Completo)] [UF] ANO [TIPO]. Texto clínico..."
+# Ex: "HSL-SP 2021 ACESSO DIRETO. Adolescente..."
+# Ex: "ENARE - (EXAME NACIONAL DE RESIDÊNCIA) BR 2025 R+ CM Paciente..."
+# Ex: "SUS-BA - (SISTEMA ÚNICO) BA 2025 ACESSO DIRETO Uma paciente..."
+_BANCA_PREFIX_RE = re.compile(
+    r'^'
+    r'(?:[A-ZÁÉÍÓÚ][A-ZÁÉÍÓÚ0-9\-\.]+)'       # sigla: HSL-SP, ENARE, USP-SP, IAMSPE-SP...
+    r'(?:\s*-\s*\([^)]{5,120}\))?'             # nome completo opcional: - (EXAME NACIONAL...)
+    r'(?:\s+[A-Z]{2})?'                        # estado/país: BR, SP, BA...
+    r'\s+\d{4}'                                # ano: 2021, 2025...
+    r'[^.]*?'                                  # tipo: ACESSO DIRETO, R+ CM, Revalida...
+    r'(?:\.\s*|\s{2,}|\s+(?=[A-ZÁÉÍÓÚ][a-záéíóú]))',  # separador: ponto, espaços, ou capital
+    re.UNICODE,
+)
+
+def strip_banca_prefix(enunciado: str) -> str:
+    """
+    Remove prefixo banca/ano do início do enunciado.
+    Retorna o texto clínico puro, que é o que o Manager indexa.
+    """
+    text = (enunciado or "").strip()
+    m = _BANCA_PREFIX_RE.match(text)
+    if m:
+        remainder = text[m.end():].strip()
+        # Só remove se sobrou texto clínico com pelo menos 5 palavras
+        if len(remainder.split()) >= 5:
+            return remainder
+    return text
+
+
 # ─────────── Queries ───────────
 
 def build_queries_from_enunciado(
@@ -322,8 +354,10 @@ def build_queries_from_enunciado(
     if not text:
         return []
 
-    # Variante sem acentos (para diferenças de normalização entre PDF e site)
+    # Texto sem o prefixo de banca/ano (é o que o Manager realmente indexa)
+    text_clean = strip_banca_prefix(text)
     text_nd = unidecode(text)
+    text_clean_nd = unidecode(text_clean)
 
     queries: list[tuple[str, int]] = []
     seen: set[str] = set()
@@ -337,12 +371,18 @@ def build_queries_from_enunciado(
         seen.add(q.lower())
         queries.append((q, priority))
 
-    words = text.split()
-    words_nd = text_nd.split()
+    # Usa o texto limpo como base principal de queries
+    words = text_clean.split()
+    words_nd = text_clean_nd.split()
     n = len(words)
 
+    # ── 0. Início do texto LIMPO (sem banca) — máxima prioridade ─────────────
+    if text_clean != text:
+        add_unique(" ".join(words[:12]), priority=0)
+        add_unique(" ".join(words[:8]), priority=0)
+
     # ── 1. Última frase (a pergunta em si — mais específica e única) ──────────
-    sentences = re.split(r"[.!?]\s+", text)
+    sentences = re.split(r"[.!?]\s+", text_clean)
     sentences = [s.strip() for s in sentences if len(s.strip().split()) >= 4]
     if len(sentences) >= 1:
         add_unique(sentences[-1], priority=1)           # última frase
@@ -495,9 +535,13 @@ def parse_listagem_texto(raw: str) -> Tuple[str, Dict[str, str], bool]:
 
 
 def validate_question_match(pdf_q: QuestionBlock, site_q: SiteQuestion) -> Tuple[bool, int, int]:
-    a_n = normalize_text(pdf_q.enunciado)
+    # Compara sempre com o texto limpo (sem prefixo de banca) do PDF
+    # para evitar que "HSL-SP 2021 ACESSO DIRETO" reduza o score artificialmente
+    pdf_enun_clean = strip_banca_prefix(pdf_q.enunciado)
+
+    a_n = normalize_text(pdf_enun_clean)
     b_n = normalize_text(site_q.enunciado)
-    a_x = normalize_for_comparison(pdf_q.enunciado)
+    a_x = normalize_for_comparison(pdf_enun_clean)
     b_x = normalize_for_comparison(site_q.enunciado)
 
     ts = max(fuzz.token_set_ratio(a_n, b_n), fuzz.token_set_ratio(a_x, b_x))
@@ -561,6 +605,7 @@ def find_code_for_question(
     best_baixa: Optional[tuple[MatchResult, int]] = None
     query_count = 0
     max_score_seen = 0
+    total_candidates_seen = 0   # candidatos encontrados (resultado não-vazio)
     logger(f"  [{questao.numero}] {len(queries)} queries geradas para busca.")
 
     def _cancelled() -> bool:
@@ -614,6 +659,7 @@ def find_code_for_question(
                 sq = SiteQuestion(code, enun, alts, is_ad, esp)
                 match_ok, score, num_alt = validate_question_match(questao, sq)
                 max_score_seen = max(max_score_seen, score)
+                total_candidates_seen += 1
                 if not match_ok:
                     continue
 
@@ -650,7 +696,10 @@ def find_code_for_question(
             if len(seen_codes) >= MAX_SEEN_CODES_BEFORE_STOP and best_media:
                 break
 
-        if query_count >= SMART_STOP_AFTER and max_score_seen < MIN_SCORE_TO_CONTINUE:
+        # Smart Stop: só desiste se encontrou candidatos mas todos com score baixo.
+        # Se não encontrou candidatos (queries retornaram 0 resultados), continua —
+        # pode ser que as próximas queries (sem prefixo de banca) funcionem.
+        if query_count >= SMART_STOP_AFTER and total_candidates_seen > 0 and max_score_seen < MIN_SCORE_TO_CONTINUE:
             logger(f"  [{questao.numero}] Smart Stop após {query_count} queries. Melhor score: {max_score_seen}%")
             break
 
