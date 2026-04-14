@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi.responses import FileResponse
 from routers import slides, pdf, auth
 from routers import docx_router
+from routers import extractor_router
 from services.job_manager import get_job, cancel_job
 
 # Produção = API_SECRET_KEY está definida no Railway
@@ -52,6 +53,7 @@ app.include_router(slides.router, prefix="/api/slides", tags=["slides"])
 app.include_router(pdf.router, prefix="/api/pdf", tags=["pdf"])
 app.include_router(docx_router.router, prefix="/api/docx", tags=["docx"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(extractor_router.router, prefix="/api/extractor", tags=["extractor"])
 
 
 @app.get("/")
@@ -122,6 +124,44 @@ def docx_cancel(job_id: str):
     if not ok:
         return {"error": "Job não encontrado"}
     return {"job_id": job_id, "status": "cancelled"}
+
+
+@app.get("/api/extractor/status/{job_id}")
+def extractor_job_status(job_id: str):
+    """Polling de status do job PPTX Extractor — sem API key."""
+    job = get_job(job_id)
+    if not job:
+        return {"status": "not_found", "logs": [], "error": "Job não encontrado"}
+    questoes = (job.result or {}).get("questoes", [])
+    return {
+        "status": job.status,
+        "logs": job.logs,
+        "error": job.error,
+        "total": len(questoes),
+    }
+
+
+@app.get("/api/extractor/download/{job_id}")
+def extractor_download(job_id: str):
+    """Download do CSV de questões — sem API key (job_id UUID é auth suficiente)."""
+    import csv, io
+    from fastapi.responses import StreamingResponse
+    from services.pptx_extractor_service import COLUNAS
+    job = get_job(job_id)
+    if not job or not job.result:
+        return {"error": "Job não encontrado ou sem resultado"}
+    questoes = job.result.get("questoes", [])
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=COLUNAS, extrasaction="ignore")
+    writer.writeheader()
+    for q in questoes:
+        writer.writerow({col: q.get(col, "") for col in COLUNAS})
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=questoes_pptx_{job_id[:8]}.csv"},
+    )
 
 
 @app.post("/api/pdf/cancel/{job_id}")
