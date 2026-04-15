@@ -114,34 +114,61 @@ def _run_extraction_thread(
         job.error = str(e)
 
 
+def _parse_questao_texto(texto: str):
+    """
+    Recebe texto livre com enunciado + alternativas colados juntos e separa:
+      enunciado: str
+      alts: list[str]   — apenas as linhas de alternativa, com prefixo original
+    Aceita prefixos: "A)" "A." "A -" "a)" "a." — maiúscula ou minúscula.
+    """
+    import re
+    lines = texto.splitlines()
+    alt_re = re.compile(r"^\s*[A-Ea-e]\s*[).:\-]\s*.+")
+
+    enunciado_lines = []
+    alt_lines = []
+    in_alts = False
+
+    for line in lines:
+        if alt_re.match(line):
+            in_alts = True
+        if in_alts:
+            if line.strip():
+                alt_lines.append(line.strip())
+        else:
+            enunciado_lines.append(line)
+
+    enunciado = "\n".join(enunciado_lines).strip()
+    return enunciado, alt_lines
+
+
 @router.post("/gerar-comentario")
 async def gerar_comentario(
     background_tasks: BackgroundTasks,
-    enunciado: str = Form(...),
-    alternativa_a: str = Form(""),
-    alternativa_b: str = Form(""),
-    alternativa_c: str = Form(""),
-    alternativa_d: str = Form(""),
-    alternativa_e: str = Form(""),
+    texto_questao: str = Form(...),
     gabarito: str = Form(...),
 ):
     """
-    Gera o comentário de uma questão avulsa (sem PPTX) usando o mesmo prompt
-    do processador de slides. Retorna job_id para polling.
+    Gera comentário de questão avulsa.
+    texto_questao: enunciado + alternativas colados num campo só.
+    gabarito: letra (A-E).
     """
-    alts = [a for a in [alternativa_a, alternativa_b, alternativa_c, alternativa_d, alternativa_e] if a.strip()]
-    if not enunciado.strip():
-        return {"error": "Enunciado é obrigatório."}
-    if not alts:
-        return {"error": "Informe ao menos uma alternativa."}
+    if not texto_questao.strip():
+        return {"error": "Cole o texto da questão."}
     if not gabarito.strip():
         return {"error": "Gabarito é obrigatório."}
+
+    enunciado, alts = _parse_questao_texto(texto_questao)
+    if not enunciado:
+        return {"error": "Não foi possível identificar o enunciado no texto colado."}
+    if not alts:
+        return {"error": "Não foi possível identificar as alternativas. Certifique-se que começam com A) B) C)..."}
 
     job = create_job()
     background_tasks.add_task(
         _run_gerar_comentario,
         job.id,
-        enunciado.strip(),
+        enunciado,
         alts,
         gabarito.strip().upper(),
     )
