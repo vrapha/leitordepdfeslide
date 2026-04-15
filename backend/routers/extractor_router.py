@@ -199,16 +199,17 @@ def _run_gerar_comentario(job_id: str, enunciado: str, alts: list, gabarito: str
 
 @router.get("/status/{job_id}")
 async def get_status(job_id: str):
-    """Polling de status — retorna progresso e contagem."""
+    """Polling de status — retorna progresso, contagem e comentário (se avulso)."""
     job = get_job(job_id)
     if not job:
         return {"status": "not_found", "logs": [], "error": "Job não encontrado"}
-    questoes = (job.result or {}).get("questoes", [])
+    result = job.result or {}
     return {
         "status": job.status,
         "logs": job.logs,
         "error": job.error,
-        "total": len(questoes),
+        "total": len(result.get("questoes", [])),
+        "comentario": result.get("comentario"),
     }
 
 
