@@ -132,12 +132,13 @@ def extractor_job_status(job_id: str):
     job = get_job(job_id)
     if not job:
         return {"status": "not_found", "logs": [], "error": "Job não encontrado"}
-    questoes = (job.result or {}).get("questoes", [])
+    result = job.result or {}
     return {
         "status": job.status,
         "logs": job.logs,
         "error": job.error,
-        "total": len(questoes),
+        "total": len(result.get("questoes", [])),
+        "comentario": result.get("comentario"),   # preenchido apenas no gerar-comentario
     }
 
 

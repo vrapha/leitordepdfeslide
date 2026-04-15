@@ -19,6 +19,8 @@ from services.pptx_extractor_service import (
     COLUNAS,
     parse_range,
 )
+from services.ppt_service import build_prompt
+from services.openai_service import query_openai
 from security import require_api_key
 
 router = APIRouter(dependencies=[Depends(require_api_key)])
@@ -106,6 +108,62 @@ def _run_extraction_thread(
         )
         job.result = {"questoes": questoes}
         job.status = "done"
+    except Exception as e:
+        logger(f"Erro: {e}", "ERROR")
+        job.status = "error"
+        job.error = str(e)
+
+
+@router.post("/gerar-comentario")
+async def gerar_comentario(
+    background_tasks: BackgroundTasks,
+    enunciado: str = Form(...),
+    alternativa_a: str = Form(""),
+    alternativa_b: str = Form(""),
+    alternativa_c: str = Form(""),
+    alternativa_d: str = Form(""),
+    alternativa_e: str = Form(""),
+    gabarito: str = Form(...),
+):
+    """
+    Gera o comentário de uma questão avulsa (sem PPTX) usando o mesmo prompt
+    do processador de slides. Retorna job_id para polling.
+    """
+    alts = [a for a in [alternativa_a, alternativa_b, alternativa_c, alternativa_d, alternativa_e] if a.strip()]
+    if not enunciado.strip():
+        return {"error": "Enunciado é obrigatório."}
+    if not alts:
+        return {"error": "Informe ao menos uma alternativa."}
+    if not gabarito.strip():
+        return {"error": "Gabarito é obrigatório."}
+
+    job = create_job()
+    background_tasks.add_task(
+        _run_gerar_comentario,
+        job.id,
+        enunciado.strip(),
+        alts,
+        gabarito.strip().upper(),
+    )
+    return {"job_id": job.id, "status": "running"}
+
+
+def _run_gerar_comentario(job_id: str, enunciado: str, alts: list, gabarito: str):
+    job = get_job(job_id)
+    if not job:
+        return
+
+    logger = make_logger(job)
+    job.status = "running"
+
+    try:
+        logger("Construindo prompt...")
+        prompt = build_prompt(enunciado, alts, gabarito)
+        logger("Chamando IA para gerar comentário...")
+        comentario = query_openai(prompt, logger)
+        job.result = {"comentario": comentario}
+        job.status = "done"
+        logger("Comentário gerado com sucesso.")
     except Exception as e:
         logger(f"Erro: {e}", "ERROR")
         job.status = "error"
