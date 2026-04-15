@@ -259,21 +259,41 @@ def _inverter_comentario(enunciado: str) -> str:
 # ── Metadados ─────────────────────────────────────────────────────────────────
 
 def _extrair_metadados(prs: Presentation) -> Dict[str, str]:
-    """Extrai banca, ano e tipo dos primeiros slides."""
+    """
+    Extrai banca, ano e tipo da capa (primeiros 3 slides).
+    Estratégia:
+      1. Tenta padrão "SIGLA 2026 Tipo" em uma única linha/parágrafo.
+      2. Fallback: coleta todo o texto do slide e procura o primeiro ano (20xx/19xx).
+    """
     meta = {"banca": "", "ano": "", "tipo": ""}
+
     for slide in list(prs.slides)[:3]:
-        if meta["banca"]:
-            break
+        slide_texts: List[str] = []
         for shape in slide.shapes:
             if not shape.has_text_frame:
                 continue
             for para in shape.text_frame.paragraphs:
                 txt = para.text.strip()
-                m = re.match(r"^([A-ZÁÉÍÓÚ]{2,})\s+(\d{4})\s+(.+)$", txt)
-                if m and not meta["banca"]:
+                if not txt:
+                    continue
+                slide_texts.append(txt)
+                # Estratégia 1: "SIGLA 2026 Tipo de Prova" na mesma linha
+                m = re.match(r"^([A-ZÁÉÍÓÚ\-]{2,})\s+(\d{4})\s+(.+)$", txt)
+                if m and not meta["ano"]:
                     meta["banca"] = m.group(1)
-                    meta["ano"] = m.group(2)
-                    meta["tipo"] = m.group(3)
+                    meta["ano"]   = m.group(2)
+                    meta["tipo"]  = m.group(3).strip()
+
+        # Estratégia 2: ano em qualquer texto do slide (20xx ou 19xx)
+        if not meta["ano"] and slide_texts:
+            full = " ".join(slide_texts)
+            m_ano = re.search(r"\b(20\d{2}|19\d{2})\b", full)
+            if m_ano:
+                meta["ano"] = m_ano.group(1)
+
+        if meta["ano"]:
+            break
+
     return meta
 
 
@@ -415,8 +435,8 @@ def extrair_questoes_pptx(
             "nome_professor_comentario":   com,
             "nome_professor_video":        vid,
             "grande_area_oficial":         (grande_area or "").strip(),
-            "especialidade":               to_slug(_limpar(q["especialidade"])),
-            "assunto":                     to_slug(_limpar(q["assunto"])),
+            "especialidade":               _limpar(q["especialidade"]),
+            "assunto":                     _limpar(q["assunto"]),
         }
         resultado.append(row)
 
