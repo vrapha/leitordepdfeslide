@@ -143,24 +143,19 @@ def extractor_job_status(job_id: str):
 
 @app.get("/api/extractor/download/{job_id}")
 def extractor_download(job_id: str):
-    """Download do CSV de questões — sem API key (job_id UUID é auth suficiente)."""
-    import csv, io
+    """Download do .xlsx de questões — sem API key (job_id UUID é auth suficiente)."""
+    import io
     from fastapi.responses import StreamingResponse
-    from services.pptx_extractor_service import COLUNAS
+    from services.pptx_extractor_service import questoes_to_xlsx_bytes
     job = get_job(job_id)
     if not job or not job.result:
         return {"error": "Job não encontrado ou sem resultado"}
     questoes = job.result.get("questoes", [])
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=COLUNAS, extrasaction="ignore")
-    writer.writeheader()
-    for q in questoes:
-        writer.writerow({col: q.get(col, "") for col in COLUNAS})
-    output.seek(0)
+    xlsx_bytes = questoes_to_xlsx_bytes(questoes)
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=questoes_pptx_{job_id[:8]}.csv"},
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=questoes_pptx_{job_id[:8]}.xlsx"},
     )
 
 

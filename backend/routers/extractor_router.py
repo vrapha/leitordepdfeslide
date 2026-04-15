@@ -4,7 +4,6 @@ Router: /api/extractor
 - GET  /status/{job_id} — polling de status (público, sem API key)
 - GET  /download/{job_id} — baixa CSV com 27 colunas
 """
-import csv
 import io
 import json
 from pathlib import Path
@@ -15,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from services.job_manager import create_job, get_job, make_logger
 from services.pptx_extractor_service import (
     extrair_questoes_pptx,
+    questoes_to_xlsx_bytes,
     ProfessorBloco,
     COLUNAS,
     parse_range,
@@ -144,22 +144,16 @@ async def get_result(job_id: str):
 
 
 @router.get("/download/{job_id}")
-async def download_csv(job_id: str):
-    """Baixa as questões como CSV com 27 colunas (formato Manager)."""
+async def download_xlsx(job_id: str):
+    """Baixa as questões como .xlsx com 27 colunas (formato Manager)."""
     job = get_job(job_id)
     if not job or not job.result:
         return {"error": "Job não encontrado ou sem resultado"}
 
     questoes = job.result.get("questoes", [])
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=COLUNAS, extrasaction="ignore")
-    writer.writeheader()
-    for q in questoes:
-        writer.writerow({col: q.get(col, "") for col in COLUNAS})
-
-    output.seek(0)
+    xlsx_bytes = questoes_to_xlsx_bytes(questoes)
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=questoes_pptx_{job_id[:8]}.csv"},
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=questoes_pptx_{job_id[:8]}.xlsx"},
     )

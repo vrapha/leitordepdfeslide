@@ -422,3 +422,67 @@ def extrair_questoes_pptx(
 
     logger(f"Total exportado: {len(resultado)} questões.")
     return resultado
+
+
+# ── Geração de Excel ──────────────────────────────────────────────────────────
+
+def questoes_to_xlsx_bytes(questoes: List[Dict]) -> bytes:
+    """
+    Converte lista de questões (dicts com 27 colunas) para bytes de um .xlsx
+    pronto para download, idêntico ao formato do emrautomacao.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from io import BytesIO
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Questões"
+
+    header_font  = Font(bold=True, color="FFFFFF")
+    header_fill  = PatternFill(fill_type="solid", fgColor="2E75B6")
+    wrap_align   = Alignment(wrap_text=True, vertical="top")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    # Cabeçalho
+    ws.append(COLUNAS)
+    for cell in ws[1]:
+        cell.font      = header_font
+        cell.fill      = header_fill
+        cell.alignment = header_align
+
+    ws.row_dimensions[1].height = 30
+
+    # Larguras razoáveis por coluna
+    col_widths = {
+        "banca": 10, "ano": 6, "tipo_de_prova": 14, "codigo": 22,
+        "enunciado": 60, "alternativa_correta": 8, "anulada": 7,
+        "alternativa_a": 40, "alternativa_b": 40, "alternativa_c": 40,
+        "alternativa_d": 40, "alternativa_e": 40,
+        "imagem": 12, "codigo_vimeo": 14,
+        "dica_emr": 40, "inverter_comentario": 8, "descricao_comentario": 60,
+        "justificativa_alternativa_a": 50, "justificativa_alternativa_b": 50,
+        "justificativa_alternativa_c": 50, "justificativa_alternativa_d": 50,
+        "justificativa_alternativa_e": 50,
+        "nome_professor_comentario": 22, "nome_professor_video": 22,
+        "grande_area_oficial": 20, "especialidade": 20, "assunto": 20,
+    }
+    for i, col in enumerate(COLUNAS, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = col_widths.get(col, 15)
+
+    # Dados
+    for q in questoes:
+        row_values = [q.get(col, "") for col in COLUNAS]
+        ws.append(row_values)
+        row_idx = ws.max_row
+        for cell in ws[row_idx]:
+            cell.alignment = wrap_align
+        ws.row_dimensions[row_idx].height = 60
+
+    # Congela cabeçalho
+    ws.freeze_panes = "A2"
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
