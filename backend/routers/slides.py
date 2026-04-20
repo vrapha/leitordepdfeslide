@@ -102,6 +102,34 @@ async def process_slides(
     return {"process_job_id": process_job.id}
 
 
+def _merge_duplicate_questions(slides_data: list[dict]) -> list[dict]:
+    """Mescla slides com mesmo question_number — salva comentário apenas no slide com alternativas."""
+    seen: dict = {}  # question_number -> index in merged
+    merged: list[dict] = []
+
+    for item in slides_data:
+        q_num = item.get("question_number")
+        if q_num is not None and q_num in seen:
+            existing = merged[seen[q_num]]
+            extra_text = (item.get("question") or "").strip()
+            if extra_text:
+                existing["question"] = (existing.get("question") or "").strip() + " " + extra_text
+            # Se o slide atual tem alternativas e o existente não, usa índice/alternativas do atual
+            if item.get("alternatives") and not existing.get("alternatives"):
+                existing["alternatives"] = item["alternatives"]
+                existing["slide_index"] = item["slide_index"]
+            # Atualiza gabarito se o atual tem e o existente não
+            if item.get("correct_answer") and not existing.get("correct_answer"):
+                existing["correct_answer"] = item["correct_answer"]
+                existing["slide_index"] = item["slide_index"]
+        else:
+            if q_num is not None:
+                seen[q_num] = len(merged)
+            merged.append(dict(item))
+
+    return merged
+
+
 def _run_processing_thread(
     job_id: str,
     pptx_path: str,
@@ -115,6 +143,8 @@ def _run_processing_thread(
 
     logger = make_logger(job)
     job.status = "running"
+
+    slides_data = _merge_duplicate_questions(slides_data)
 
     valid = [s for s in slides_data if s.get("correct_answer")]
     logger(f"Iniciando processamento de {len(valid)} questões via OpenAI.")
