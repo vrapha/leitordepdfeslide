@@ -725,6 +725,20 @@ def _ensure_logged_in_and_save_state(page, context, storage_state_path: str):
         context.storage_state(path=str(sp))
 
 
+def _auto_relogin_in_thread(logger: Callable = print) -> bool:
+    """Executa auto_relogin em thread separada para evitar conflito com contexto sync_playwright ativo."""
+    import threading
+    result = [False]
+
+    def _run():
+        result[0] = auto_relogin(logger)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=120)
+    return result[0]
+
+
 def auto_relogin(logger: Callable = print) -> bool:
     """
     Faz login automático no Manager usando MANAGER_EMAIL e MANAGER_PASSWORD
@@ -839,7 +853,7 @@ def run_pdf_extraction(
                 logger("⚠️  Sessão expirada ao iniciar — tentando login automático...")
                 pg.close()
                 b.close()
-                if not auto_relogin(logger):
+                if not _auto_relogin_in_thread(logger):
                     raise RuntimeError(
                         "Sessão expirada e login automático falhou. "
                         "Configure MANAGER_EMAIL e MANAGER_PASSWORD no Railway."
@@ -881,7 +895,7 @@ def run_pdf_extraction(
                 match = find_code_for_question(page, questao, logger, job_id=job_id)
             except SessionExpiredError:
                 logger("⚠️  Sessão expirada — tentando renovar automaticamente...")
-                renewed = auto_relogin(logger)
+                renewed = _auto_relogin_in_thread(logger)
                 if not renewed:
                     logger("✗ Não foi possível renovar a sessão. Encerrando com resultados parciais.")
                     break
