@@ -126,6 +126,46 @@ def is_certo_errado_alts(alts: Dict[str, str]) -> bool:
 
 # ─────────── Sumário / range ───────────
 
+def _find_section_pages_by_scan(pdf_path: str) -> Tuple[Optional[int], Optional[int]]:
+    """Fallback 1: varre o PDF procurando cabeçalhos explícitos de seção."""
+    doc = fitz.open(pdf_path)
+    page_q: Optional[int] = None
+    page_c: Optional[int] = None
+    for i in range(doc.page_count):
+        text = doc.load_page(i).get_text("text") or ""
+        if page_q is None and re.search(r"^\s*QUEST[ÕO]ES\s+EXTRAS\s*$", text, re.I | re.M):
+            page_q = i + 1
+        if page_c is None and re.search(r"^\s*COMENT[ÁA]RIOS\s+E\s+GABARITOS\s*$", text, re.I | re.M):
+            page_c = i + 1
+        if page_q and page_c:
+            break
+    doc.close()
+    return page_q, page_c
+
+
+def _find_section_pages_heuristic(pdf_path: str) -> Tuple[Optional[int], Optional[int]]:
+    """
+    Fallback 2: heurística para PDFs sem cabeçalhos explícitos de seção.
+    - QUESTÕES EXTRAS: primeira página com questões numeradas (N. BANCA...) e alternativas, sem COMENTÁRIO inline.
+    - COMENTÁRIOS E GABARITOS: primeira página com linha "N. COMENTÁRIO:".
+    """
+    doc = fitz.open(pdf_path)
+    page_q: Optional[int] = None
+    page_c: Optional[int] = None
+    for i in range(doc.page_count):
+        text = doc.load_page(i).get_text("text") or ""
+        if page_c is None and re.search(r"^\s*\d+\.\s+COMENTÁRIO:", text, re.I | re.M):
+            page_c = i + 1
+        if page_q is None and page_c is None:
+            has_numbered_q = bool(re.search(r"^\s*\d+\.\s+[A-Z]{2}", text, re.M))
+            has_alternatives = len(re.findall(r"(?m)^\s*[A-E][\.)]", text)) >= 2
+            has_comentario = bool(re.search(r"\bCOMENTÁRIO\b|\bCOMENTARIO\b", text, re.I))
+            if has_numbered_q and has_alternatives and not has_comentario:
+                page_q = i + 1
+    doc.close()
+    return page_q, page_c
+
+
 def find_section_pages_via_sumario(pdf_path: str) -> Tuple[int, int]:
     doc = fitz.open(pdf_path)
     max_scan = min(12, doc.page_count)
@@ -137,6 +177,22 @@ def find_section_pages_via_sumario(pdf_path: str) -> Tuple[int, int]:
     m_c = re.search(r"COMENT[ÁA]RIOS\s+E\s+GABARITOS\s+\.{2,}\s*(\d{1,4})\s*$", blob, re.I | re.M)
 
     if not m_q or not m_c:
+        # Sumário com "ERRO! INDICADOR NÃO DEFINIDO." (referências quebradas no Word → PDF)
+        broken_toc = re.search(
+            r"(QUEST[ÕO]ES\s+EXTRAS|COMENT[ÁA]RIOS\s+E\s+GABARITOS).*ERRO.*INDICADOR",
+            blob, re.I | re.S,
+        )
+        if broken_toc:
+            # Tenta cabeçalhos explícitos primeiro
+            page_q, page_c = _find_section_pages_by_scan(pdf_path)
+            # Se não encontrou, usa heurística de conteúdo
+            if not page_q or not page_c:
+                page_q, page_c = _find_section_pages_heuristic(pdf_path)
+            if page_q and page_c:
+                if page_c < page_q:
+                    raise RuntimeError(f"SUMÁRIO inconsistente: comentários ({page_c}) < questões ({page_q}).")
+                return page_q, page_c
+
         raise RuntimeError(
             "Não localizei no SUMÁRIO:\n"
             f" - QUESTÕES EXTRAS: {'OK' if m_q else 'NÃO ENCONTRADO'}\n"
@@ -173,6 +229,10 @@ def extract_text_from_page_range(pdf_path: str, start: int, end_excl: int) -> st
     trunc = "COMENTÁRIOS E GABARITOS"
     if trunc in full:
         full = full[: full.find(trunc)]
+    # PDFs sem cabeçalho explícito: a seção de comentários começa com "1. COMENTÁRIO:"
+    m_com = re.search(r"\n\s*1\.\s+COMENTÁRIO:", full, re.I)
+    if m_com:
+        full = full[: m_com.start()]
     return full
 
 
