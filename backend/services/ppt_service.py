@@ -147,12 +147,16 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
         )
     else:
         prompt = (
+            f"GABARITO OFICIAL: Letra {correct}. Esta é a resposta correta definida pela banca examinadora. "
+            f"Não questione nem altere — sua tarefa é explicar POR QUE a Letra {correct} está correta "
+            "e as demais incorretas.\n\n"
             "Comente a questão de residência médica abaixo.\n\n"
             "REGRAS:\n"
             "1. Texto puro — zero markdown, zero asteriscos, zero hífens como marcadores\n"
             "2. Siga exatamente a estrutura e os rótulos abaixo\n"
             "3. No Resumo, cite obrigatoriamente os dados clínicos do caso (ECG, valores, artéria, localização)\n"
-            "4. Nas alternativas, use sempre 'incorreta' ou 'correta' (feminino)\n\n"
+            "4. Nas alternativas, use sempre 'incorreta' ou 'correta' (feminino)\n"
+            f"5. A Letra {correct} É OBRIGATORIAMENTE a correta — escreva 'correta' para ela e 'incorreta' para todas as outras\n\n"
             "Dica de Prova:\n"
             "[macete clínico de 50-70 palavras, memorável, estilo 'tempo é músculo' ou 'pense em X se ver Y']\n\n"
             "Resumo do Tema:\n"
