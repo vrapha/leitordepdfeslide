@@ -163,12 +163,11 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
             "[parágrafo único de 280-320 palavras: fisiopatologia, diagnóstico, tratamento com prazos e doses, "
             "ponto mais cobrado em provas. Obrigatório referenciar os dados clínicos específicos do caso.]\n\n"
             "Comentário Alternativa por Alternativa:\n"
-            "Letra A: incorreta/correta. [raciocínio clínico em 35-45 palavras]\n"
-            "Letra B: incorreta/correta. [raciocínio clínico em 35-45 palavras]\n"
-            "Letra C: incorreta/correta. [raciocínio clínico em 35-45 palavras]\n"
-            "Letra D: incorreta/correta. [raciocínio clínico em 35-45 palavras]\n"
-            "Letra E: incorreta/correta. [raciocínio clínico em 35-45 palavras, se houver]\n\n"
-            f"Resposta correta: Letra {correct}\n\n"
+            + "\n".join(
+                f"Letra {l}: {'correta' if l == correct.upper() else 'incorreta'}. [raciocínio clínico em 35-45 palavras]"
+                for l in ["A", "B", "C", "D", "E"]
+            ) + "\n\n"
+            + f"Resposta correta: Letra {correct}\n\n"
             "QUESTÃO:\n" + question + "\n\n"
             "ALTERNATIVAS:\n" + alts_str + "\n\n"
             f"Gabarito: {correct}\n"
