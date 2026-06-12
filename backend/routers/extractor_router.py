@@ -153,6 +153,8 @@ async def gerar_comentario(
     texto_questao: enunciado + alternativas colados num campo só.
     gabarito: letra (A-E).
     """
+    import logging
+    logging.warning(f"[gerar-comentario] gabarito recebido: {gabarito!r}")
     if not texto_questao.strip():
         return {"error": "Cole o texto da questão."}
     if not gabarito.strip():
