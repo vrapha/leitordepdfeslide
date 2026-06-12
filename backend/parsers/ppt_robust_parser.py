@@ -162,7 +162,12 @@ class RobustPPTXParser:
                 best = info
                 best_count = count
         if best is None and text_shapes:
-            best = max(text_shapes, key=lambda s: s["cy"])
+            # Prefere shape com mais parágrafos (alternativas têm 4-5 itens)
+            multi = [s for s in text_shapes if len(s["paragraphs"]) >= 3]
+            if multi:
+                best = max(multi, key=lambda s: len(s["paragraphs"]))
+            else:
+                best = max(text_shapes, key=lambda s: s["cy"])
         return best
 
     def _get_pdf_doc(self):

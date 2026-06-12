@@ -267,6 +267,20 @@ class PPTParser:
             alts_shape = named.get("alternativas")
             codigo_shape = named.get("codigo")
 
+            # Estratégia 1b: "Espaço Reservado para Conteúdo" (PPTX autoral)
+            if not (enunciado_shape and alts_shape):
+                placeholder_shapes = sorted(
+                    [s for s in all_shapes
+                     if hasattr(s, "name") and s.has_text_frame
+                     and s.text_frame.text.strip()
+                     and ("reservado" in s.name.lower() or "conteúdo" in s.name.lower()
+                          or "conteúdo" in s.name.lower())],
+                    key=lambda s: s.top,
+                )
+                if len(placeholder_shapes) >= 2:
+                    enunciado_shape = placeholder_shapes[0]
+                    alts_shape = placeholder_shapes[-1]
+
             if enunciado_shape and alts_shape:
                 question_text = enunciado_shape.text_frame.text.strip()
                 alternatives = [
