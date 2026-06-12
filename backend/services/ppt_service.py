@@ -164,8 +164,9 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
             "ponto mais cobrado em provas. Obrigatório referenciar os dados clínicos específicos do caso.]\n\n"
             "Comentário Alternativa por Alternativa:\n"
             + "\n".join(
-                f"Letra {l}: {'correta' if l == correct.upper() else 'incorreta'}. [raciocínio clínico em 35-45 palavras]"
-                for l in ["A", "B", "C", "D", "E"]
+                f"Letra {letters[i]}: {'correta' if letters[i] == correct.upper() else 'incorreta'}. [raciocínio clínico em 35-45 palavras]"
+                for i in range(len(formatted_alts))
+                if i < len(letters)
             ) + "\n\n"
             + f"Resposta correta: Letra {correct}\n\n"
             "QUESTÃO:\n" + question + "\n\n"
