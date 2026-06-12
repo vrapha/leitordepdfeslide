@@ -164,7 +164,7 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
             "Letra C: incorreta/correta. [raciocínio clínico em 35-45 palavras]\n"
             "Letra D: incorreta/correta. [raciocínio clínico em 35-45 palavras]\n"
             "Letra E: incorreta/correta. [raciocínio clínico em 35-45 palavras, se houver]\n\n"
-            "Resposta correta: Letra X\n\n"
+            f"Resposta correta: Letra {correct}\n\n"
             "QUESTÃO:\n" + question + "\n\n"
             "ALTERNATIVAS:\n" + alts_str + "\n\n"
             f"Gabarito: {correct}\n"

@@ -310,13 +310,21 @@ class PPTParser:
                         question_text += (" " + text if question_text else text)
 
             # Estratégia 3: extração por heurística de fim de enunciado
+            alts_from_heuristic = False
             if not alternatives and question_text:
                 extracted_q, extracted_alts = self._extract_alts_from_text(question_text)
                 if extracted_alts:
                     question_text = extracted_q
                     alternatives = extracted_alts
+                    alts_from_heuristic = True
 
-            if not question_text and not alternatives:
+            if not question_text or len(alternatives) < 2:
+                continue
+
+            # Rejeita slides onde a heurística extraiu alternativas sem prefixo A)/B)/C)
+            # (evita incluir slides informativos cujo texto é confundido com alternativas)
+            letter_pat = re.compile(r"^[A-E][).]", re.IGNORECASE)
+            if alts_from_heuristic and not any(letter_pat.match(a) for a in alternatives):
                 continue
 
             q_num = None
