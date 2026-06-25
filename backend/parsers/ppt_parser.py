@@ -7,8 +7,9 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 import re
 import os
-import subprocess
 from pathlib import Path
+
+from parsers.pdf_render import render_pptx_to_pdf
 
 try:
     import fitz  # PyMuPDF
@@ -82,24 +83,16 @@ class PPTParser:
                 yield shape
 
     def _get_pdf_doc(self):
-        """Converte PPTX para PDF via LibreOffice headless (sem pywin32)."""
+        """Renderiza o PPTX em PDF (PowerPoint COM ou LibreOffice) para leitura visual."""
         if self._pdf_doc:
             return self._pdf_doc
         if not FITZ_AVAILABLE:
             return None
         try:
-            abs_ppt = str(Path(self.ppt_path).resolve())
-            output_dir = str(Path(abs_ppt).parent)
-            result = subprocess.run(
-                ["libreoffice", "--headless", "--convert-to", "pdf",
-                 "--outdir", output_dir, abs_ppt],
-                capture_output=True, text=True, timeout=60,
-            )
-            if result.returncode == 0:
-                pdf_path = abs_ppt.replace(".pptx", ".pdf")
-                if Path(pdf_path).exists():
-                    self._pdf_doc = fitz.open(pdf_path)
-                    return self._pdf_doc
+            pdf_path = render_pptx_to_pdf(self.ppt_path)
+            if pdf_path and Path(pdf_path).exists():
+                self._pdf_doc = fitz.open(pdf_path)
+                return self._pdf_doc
         except Exception as e:
             print(f"[PPTParser] PDF conversion failed: {e}")
         return None
@@ -153,7 +146,8 @@ class PPTParser:
                                 (marker.top + marker.height) / 12700.0,
                             )
                             vis_text = page.get_textbox(rect).strip().upper()
-                            m = re.search(r"([A-E])", vis_text)
+                            # Prefere o rótulo "A)"/"B)"... no início do texto lido
+                            m = re.search(r"\b([A-E])\s*[\).\-]", vis_text) or re.search(r"([A-E])", vis_text)
                             if m:
                                 return m.group(1)
                 except Exception:
@@ -281,13 +275,22 @@ class PPTParser:
                     enunciado_shape = placeholder_shapes[0]
                     alts_shape = placeholder_shapes[-1]
 
-            if enunciado_shape and alts_shape:
-                question_text = enunciado_shape.text_frame.text.strip()
+            # Emite registro quando há shapes nomeados de questão.
+            # Aceita slide PARCIAL (só enunciado OU só alternativas) quando há
+            # shape [codigo]: questões divididas em 2 slides (enunciado num slide,
+            # alternativas no seguinte) compartilham o mesmo código e são mescladas
+            # depois por question_number em _merge_duplicate_questions.
+            if (enunciado_shape and alts_shape) or (
+                codigo_shape and (enunciado_shape or alts_shape)
+            ):
+                question_text = (
+                    enunciado_shape.text_frame.text.strip() if enunciado_shape else ""
+                )
                 alternatives = [
                     p.text.strip()
                     for p in alts_shape.text_frame.paragraphs
                     if p.text.strip()
-                ]
+                ] if alts_shape else []
                 # Detectar número de questão via shape [codigo] ou texto
                 q_num = self._extract_q_num_from_shapes(
                     codigo_shape, enunciado_shape, text_blocks
@@ -295,7 +298,7 @@ class PPTParser:
                 correct_answer = self._get_answer(
                     gabarito, slide, slide_idx, len(slides_data), [], text_blocks
                 )
-                if question_text:
+                if question_text or alternatives:
                     slides_data.append({
                         "slide_index": slide_idx,
                         "question_number": q_num or (len(slides_data) + 1),
@@ -379,6 +382,13 @@ class PPTParser:
             m = re.search(r"quest[aã]o\s+(\d+)", text, re.IGNORECASE)
             if m:
                 return int(m.group(1))
+        # Fallback: procura um token de código (ex. "INEP2026REVALIDAQ6") em
+        # qualquer caixa de texto — layouts sem shape nomeado "codigo".
+        for shape in text_blocks:
+            for line in shape.text_frame.text.splitlines():
+                m = re.match(r"^[A-Za-z0-9]+Q(\d+)$", line.strip())
+                if m:
+                    return int(m.group(1))
         return None
 
     def _get_answer(self, gabarito, slide, slide_idx, q_count, alt_block_candidates, text_blocks) -> str | None:

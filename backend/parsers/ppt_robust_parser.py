@@ -6,9 +6,10 @@ Versão web: sem pywin32/COM. PDF export via LibreOffice headless.
 import zipfile
 import xml.etree.ElementTree as ET
 import re
-import subprocess
 from pathlib import Path
 from typing import Callable
+
+from parsers.pdf_render import render_pptx_to_pdf
 
 try:
     import fitz
@@ -171,26 +172,16 @@ class RobustPPTXParser:
         return best
 
     def _get_pdf_doc(self):
-        """Converte PPTX para PDF via LibreOffice headless."""
+        """Renderiza o PPTX em PDF (PowerPoint COM ou LibreOffice) para leitura visual."""
         if self._pdf_doc:
             return self._pdf_doc
         if not FITZ_AVAILABLE:
             return None
         try:
-            abs_ppt = str(Path(self.pptx_path).resolve())
-            output_dir = str(Path(abs_ppt).parent)
-            result = subprocess.run(
-                ["libreoffice", "--headless", "--convert-to", "pdf",
-                 "--outdir", output_dir, abs_ppt],
-                capture_output=True, text=True, timeout=60,
-            )
-            if result.returncode == 0:
-                pdf_path = abs_ppt.replace(".pptx", "_robust_visual_temp.pdf")
-                alt_path = abs_ppt.replace(".pptx", ".pdf")
-                for p in [pdf_path, alt_path]:
-                    if Path(p).exists():
-                        self._pdf_doc = fitz.open(p)
-                        return self._pdf_doc
+            pdf_path = render_pptx_to_pdf(self.pptx_path, self.logger)
+            if pdf_path and Path(pdf_path).exists():
+                self._pdf_doc = fitz.open(pdf_path)
+                return self._pdf_doc
         except Exception as e:
             self.logger(f"[RobustXML] PDF conversion failed: {e}")
         return None
@@ -222,7 +213,8 @@ class RobustPPTXParser:
                             (marker["y"] + marker["cy"]) / 12700.0,
                         )
                         vis_text = page.get_textbox(rect).strip().upper()
-                        m = re.search(r"([A-E])", vis_text)
+                        # Prefere o rótulo "A)"/"B)"... no início do texto lido
+                        m = re.search(r"\b([A-E])\s*[\).\-]", vis_text) or re.search(r"([A-E])", vis_text)
                         if m:
                             letter = m.group(1)
                             self.logger(f"[RobustXML] Slide {slide_num}: Visual HIT -> {letter}")
