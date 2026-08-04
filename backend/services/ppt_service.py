@@ -177,6 +177,69 @@ def build_prompt(question: str, alternatives: list[str], correct: str) -> str:
     return prompt
 
 
+def build_prompt_discursiva(
+    question: str,
+    itens: list[str],
+    respostas_oficiais: str = "",
+) -> str:
+    """
+    Constrói o prompt para questões DISCURSIVAS.
+    Discursiva não tem alternativa certa/errada: cada item (A, B, C...) é uma
+    pergunta que exige uma resposta desenvolvida. A IA deve apresentar e
+    justificar a resposta esperada de cada item.
+    respostas_oficiais: opcional — se preenchido, a IA se alinha a ele; se
+    vazio, a IA desenvolve a resposta sozinha.
+    """
+    letters = ["A", "B", "C", "D", "E"]
+    formatted_itens = []
+    for i, alt in enumerate(itens):
+        if len(alt) > 2 and alt[1] in [")", "."] and alt[0].upper() in letters:
+            formatted_itens.append(alt)
+        else:
+            letter = letters[i] if i < len(letters) else f"Item {i+1}"
+            formatted_itens.append(f"{letter}) {alt}")
+
+    itens_str = "\n".join(formatted_itens)
+
+    linhas_comentario = "\n".join(
+        f"Letra {letters[i]}: [desenvolva a resposta esperada deste item em 40-60 palavras, "
+        "com o raciocínio clínico, diagnóstico e/ou conduta corretos]"
+        for i in range(len(formatted_itens))
+        if i < len(letters)
+    )
+
+    prompt = (
+        "Comente a questão DISCURSIVA de residência médica abaixo.\n\n"
+        "IMPORTANTE: questão discursiva NÃO tem alternativa certa ou errada. "
+        "Cada item (Letra A, B, C...) é uma pergunta que exige uma resposta desenvolvida. "
+        "Sua tarefa é apresentar e justificar a RESPOSTA ESPERADA de cada item — "
+        "NUNCA julgue como 'correta' ou 'incorreta'.\n\n"
+        "REGRAS:\n"
+        "1. Texto puro — zero markdown, zero asteriscos, zero hífens como marcadores\n"
+        "2. Siga exatamente a estrutura e os rótulos abaixo\n"
+        "3. No Resumo, cite obrigatoriamente os dados clínicos do caso\n"
+        "4. Nos itens, NUNCA escreva 'incorreta' nem 'correta' — desenvolva a resposta esperada\n\n"
+        "Dica de Prova:\n"
+        "[macete clínico de 50-70 palavras, memorável, estilo 'tempo é músculo' ou 'pense em X se ver Y']\n\n"
+        "Resumo do Tema:\n"
+        "[parágrafo único de 280-320 palavras: fisiopatologia, diagnóstico, tratamento com prazos e doses, "
+        "ponto mais cobrado em provas. Obrigatório referenciar os dados clínicos específicos do caso.]\n\n"
+        "Comentário Item por Item:\n"
+        + linhas_comentario + "\n\n"
+        "QUESTÃO:\n" + question + "\n\n"
+        "ITENS:\n" + itens_str + "\n"
+    )
+
+    if respostas_oficiais.strip():
+        prompt += (
+            "\nRESPOSTAS OFICIAIS DA BANCA (use como referência obrigatória — "
+            "desenvolva e explique cada uma, não contradiga):\n"
+            + respostas_oficiais.strip() + "\n"
+        )
+
+    return prompt
+
+
 def _clean_response(text: str) -> str:
     """Normaliza espaçamento e garante quebra de linha entre alternativas."""
     import re

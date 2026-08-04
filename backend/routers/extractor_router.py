@@ -19,7 +19,7 @@ from services.pptx_extractor_service import (
     COLUNAS,
     parse_range,
 )
-from services.ppt_service import build_prompt
+from services.ppt_service import build_prompt, build_prompt_discursiva
 from services.openai_service import query_openai
 from security import require_api_key
 
@@ -146,25 +146,33 @@ def _parse_questao_texto(texto: str):
 async def gerar_comentario(
     background_tasks: BackgroundTasks,
     texto_questao: str = Form(...),
-    gabarito: str = Form(...),
+    gabarito: str = Form(""),
+    tipo: str = Form("objetiva"),
 ):
     """
     Gera comentário de questão avulsa.
-    texto_questao: enunciado + alternativas colados num campo só.
-    gabarito: letra (A-E).
+    texto_questao: enunciado + alternativas/itens colados num campo só.
+    tipo: "objetiva" (default) ou "discursiva".
+      - objetiva:  gabarito é uma letra (A-E) obrigatória; IA explica certo/errado.
+      - discursiva: sem certo/errado; IA desenvolve a resposta esperada de cada
+        item. gabarito é OPCIONAL — se colado (respostas oficiais), a IA se alinha.
     """
     import logging
-    logging.warning(f"[gerar-comentario] gabarito recebido: {gabarito!r}")
+    tipo_norm = (tipo or "objetiva").strip().lower()
+    is_discursiva = tipo_norm == "discursiva"
+    logging.warning(f"[gerar-comentario] tipo={tipo_norm!r} gabarito recebido: {gabarito!r}")
+
     if not texto_questao.strip():
         return {"error": "Cole o texto da questão."}
-    if not gabarito.strip():
-        return {"error": "Gabarito é obrigatório."}
+    if not is_discursiva and not gabarito.strip():
+        return {"error": "Gabarito é obrigatório para questão objetiva."}
 
     enunciado, alts = _parse_questao_texto(texto_questao)
     if not enunciado:
         return {"error": "Não foi possível identificar o enunciado no texto colado."}
     if not alts:
-        return {"error": "Não foi possível identificar as alternativas. Certifique-se que começam com A) B) C)..."}
+        rotulo = "itens" if is_discursiva else "alternativas"
+        return {"error": f"Não foi possível identificar {rotulo}. Certifique-se que começam com A) B) C)..."}
 
     job = create_job()
     background_tasks.add_task(
@@ -172,12 +180,19 @@ async def gerar_comentario(
         job.id,
         enunciado,
         alts,
-        gabarito.strip().upper(),
+        gabarito.strip() if is_discursiva else gabarito.strip().upper(),
+        is_discursiva,
     )
     return {"job_id": job.id, "status": "running"}
 
 
-def _run_gerar_comentario(job_id: str, enunciado: str, alts: list, gabarito: str):
+def _run_gerar_comentario(
+    job_id: str,
+    enunciado: str,
+    alts: list,
+    gabarito: str,
+    is_discursiva: bool = False,
+):
     job = get_job(job_id)
     if not job:
         return
@@ -187,7 +202,10 @@ def _run_gerar_comentario(job_id: str, enunciado: str, alts: list, gabarito: str
 
     try:
         logger("Construindo prompt...")
-        prompt = build_prompt(enunciado, alts, gabarito)
+        if is_discursiva:
+            prompt = build_prompt_discursiva(enunciado, alts, gabarito)
+        else:
+            prompt = build_prompt(enunciado, alts, gabarito)
         logger("Chamando IA para gerar comentário...")
         comentario = query_openai(prompt, logger)
         job.result = {"comentario": comentario}
