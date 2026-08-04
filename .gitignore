@@ -22,3 +22,4 @@ login_manager.py
 # Misc
 .DS_Store
 *.log
+tmp_names.txt
