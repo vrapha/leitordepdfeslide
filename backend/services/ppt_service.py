@@ -202,8 +202,9 @@ def build_prompt_discursiva(
     itens_str = "\n".join(formatted_itens)
 
     linhas_comentario = "\n".join(
-        f"Letra {letters[i]}: [desenvolva a resposta esperada deste item em 40-60 palavras, "
-        "com o raciocínio clínico, diagnóstico e/ou conduta corretos]"
+        f"Letra {letters[i]}: [comece pela resposta direta e objetiva, depois no máximo "
+        "UMA frase curta de justificativa clínica — total de 20 a 30 palavras. Seja direto, "
+        "sem parágrafo longo]"
         for i in range(len(formatted_itens))
         if i < len(letters)
     )
@@ -211,14 +212,17 @@ def build_prompt_discursiva(
     prompt = (
         "Comente a questão DISCURSIVA de residência médica abaixo.\n\n"
         "IMPORTANTE: questão discursiva NÃO tem alternativa certa ou errada. "
-        "Cada item (Letra A, B, C...) é uma pergunta que exige uma resposta desenvolvida. "
-        "Sua tarefa é apresentar e justificar a RESPOSTA ESPERADA de cada item — "
+        "Cada item (Letra A, B, C...) é uma pergunta que exige uma resposta objetiva. "
+        "Sua tarefa é dar a RESPOSTA ESPERADA de cada item de forma DIRETA — "
         "NUNCA julgue como 'correta' ou 'incorreta'.\n\n"
         "REGRAS:\n"
         "1. Texto puro — zero markdown, zero asteriscos, zero hífens como marcadores\n"
         "2. Siga exatamente a estrutura e os rótulos abaixo\n"
         "3. No Resumo, cite obrigatoriamente os dados clínicos do caso\n"
-        "4. Nos itens, NUNCA escreva 'incorreta' nem 'correta' — desenvolva a resposta esperada\n\n"
+        "4. Nos itens, NUNCA escreva 'incorreta' nem 'correta'\n"
+        "5. Nos itens, seja DIRETO: resposta objetiva primeiro, no máximo uma frase curta de "
+        "justificativa (20-30 palavras por item). A explicação aprofundada fica no Resumo do Tema, "
+        "não nos itens\n\n"
         "Dica de Prova:\n"
         "[macete clínico de 50-70 palavras, memorável, estilo 'tempo é músculo' ou 'pense em X se ver Y']\n\n"
         "Resumo do Tema:\n"
