@@ -7,6 +7,15 @@ import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
+
+# Carrega backend/.env em desenvolvimento local.
+# Em produção (Railway) as variáveis já vêm do ambiente e têm precedência.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env", override=False)
+except ImportError:
+    pass
+
 from fastapi.responses import FileResponse
 from routers import slides, pdf, auth
 from routers import docx_router
@@ -171,8 +180,11 @@ def pdf_cancel(job_id: str):
 
 @app.get("/health")
 def health():
-    """Diagnóstico mínimo — apenas confirma se a chave está configurada."""
+    """Diagnóstico mínimo — apenas confirma se as chaves estão configuradas."""
+    from services.openai_service import _resolver_modelo
     return {
         "api_secret_key_set": bool(os.environ.get("API_SECRET_KEY", "")),
         "cors_configured": bool(_raw_origins),
+        "openrouter_key_set": bool(os.environ.get("OPENROUTER_API_KEY", "")),
+        "llm_model": _resolver_modelo(),
     }

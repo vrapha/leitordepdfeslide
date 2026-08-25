@@ -11,6 +11,11 @@ backend/sessions/
 backend/uploads/
 backend/*.json
 
+# Variáveis de ambiente com credenciais (o .env.example fica versionado)
+.env
+.env.local
+backend/.env
+
 # Node
 frontend/node_modules/
 frontend/dist/
